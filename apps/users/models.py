@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from cloudinary.models import CloudinaryField
+from .validators import validate_image_file
 
 
 class User(AbstractUser):
@@ -14,7 +15,7 @@ class User(AbstractUser):
     
     role = models.CharField(max_length=20, choices=USER_ROLES, default='student')
     bio = models.TextField(blank=True, null=True)
-    avatar = CloudinaryField('avatar', blank=True, null=True)
+    avatar = CloudinaryField('avatar', blank=True, null=True, validators=[validate_image_file])
     phone = models.CharField(max_length=20, blank=True, null=True)
     date_of_birth = models.DateField(blank=True, null=True)
     

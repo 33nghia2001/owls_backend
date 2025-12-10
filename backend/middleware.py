@@ -3,6 +3,7 @@ Custom Middleware for Django Application
 """
 from django.http import HttpResponseForbidden
 from django.conf import settings
+from ipware import get_client_ip
 import os
 
 
@@ -10,6 +11,7 @@ class AdminIPWhitelistMiddleware:
     """
     Middleware to restrict admin access to whitelisted IPs only.
     Prevents unauthorized access to Django admin panel.
+    Uses django-ipware to get real client IP (防止IP欺骗).
     """
     def __init__(self, get_response):
         self.get_response = get_response
@@ -24,8 +26,8 @@ class AdminIPWhitelistMiddleware:
             if settings.DEBUG and not self.allowed_ips:
                 return self.get_response(request)
             
-            # Get client IP
-            client_ip = self.get_client_ip(request)
+            # Get real client IP using django-ipware 
+            client_ip, is_routable = get_client_ip(request)
             
             # Block if IP not in whitelist
             if self.allowed_ips and client_ip not in self.allowed_ips:
@@ -34,17 +36,3 @@ class AdminIPWhitelistMiddleware:
                 )
         
         return self.get_response(request)
-    
-    def get_client_ip(self, request):
-        """
-        Get real client IP, considering proxy headers.
-        """
-        # Try to get IP from X-Forwarded-For (if behind proxy)
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            # Take the first IP (client IP)
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            # Fallback to REMOTE_ADDR
-            ip = request.META.get('REMOTE_ADDR')
-        return ip

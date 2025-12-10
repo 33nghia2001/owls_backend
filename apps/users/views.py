@@ -2,7 +2,9 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 
@@ -62,3 +64,34 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """
     serializer_class = CustomTokenObtainPairSerializer
     throttle_classes = [LoginRateThrottle]
+
+
+class LogoutView(APIView):
+    """
+    API Logout - Blacklist refresh token để vô hiệu hóa hoàn toàn.
+    Ngăn chặn "Zombie Token" attack.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        try:
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
+                return Response(
+                    {"error": "Refresh token is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Blacklist the refresh token
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            
+            return Response(
+                {"message": "Successfully logged out"},
+                status=status.HTTP_205_RESET_CONTENT
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Invalid token or already blacklisted"},
+                status=status.HTTP_400_BAD_REQUEST
+            )

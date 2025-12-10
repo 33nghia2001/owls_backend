@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from cloudinary.models import CloudinaryField
 from django.core.validators import MinValueValidator, MaxValueValidator
+from apps.users.validators import validate_video_thumbnail, validate_resource_file
 
 
 class Category(models.Model):
@@ -55,7 +56,7 @@ class Course(models.Model):
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, related_name='courses')
     
     # Media
-    thumbnail = CloudinaryField('thumbnail', blank=True, null=True)
+    thumbnail = CloudinaryField('thumbnail', blank=True, null=True, validators=[validate_video_thumbnail])
     preview_video = models.URLField(blank=True, null=True)
     
     # Course Details
@@ -167,7 +168,7 @@ class Resource(models.Model):
     
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='resources')
     title = models.CharField(max_length=255)
-    file = CloudinaryField('resource', resource_type='raw', blank=True, null=True)
+    file = CloudinaryField('resource', resource_type='raw', blank=True, null=True, validators=[validate_resource_file])
     file_url = models.URLField(blank=True, null=True)
     file_size = models.PositiveIntegerField(default=0)  # in bytes
     

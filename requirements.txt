@@ -26,6 +26,9 @@ django-turnstile>=0.2.1  # Cloudflare Turnstile
 # HTML Sanitization
 bleach>=6.0.0  # XSS protection
 
+# IP Address Handling
+django-ipware>=7.0.1  # Accurate client IP detection (防止IP欺骗)
+
 # Utilities
 requests>=2.31.0  # For API calls
 python-dateutil>=2.8.2
