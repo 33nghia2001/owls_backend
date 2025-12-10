@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 # Đảm bảo bạn đã cài đặt thư viện hỗ trợ turnstile
 from turnstile.fields import TurnstileField 
 
@@ -98,3 +99,38 @@ class InstructorProfileSerializer(serializers.ModelSerializer):
             'total_students', 'total_courses', 'average_rating', 
             'is_verified', 'verified_at', 'created_at', 'updated_at'
         ]
+
+
+# ==========================================
+# JWT Authentication Serializers
+# ==========================================
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Login Serializer tùy chỉnh:
+    1. Thêm Turnstile (Captcha) để chống Brute-force.
+    2. Trả về thêm thông tin user trong response.
+    """
+    turnstile = TurnstileField(write_only=True)
+
+    def validate(self, attrs):
+        # 1. TurnstileField sẽ tự động validate token ở đây.
+        # Nếu token sai, nó sẽ raise ValidationError ngay lập tức.
+        
+        # Xóa trường turnstile khỏi attrs trước khi đưa cho parent class xử lý login
+        attrs.pop('turnstile', None)
+
+        # 2. Gọi logic login mặc định (check username/password)
+        data = super().validate(attrs)
+
+        # 3. Custom Response: Thêm thông tin user vào JSON trả về
+        # self.user được gán tự động sau khi validate thành công
+        data['user'] = {
+            'id': self.user.id,
+            'username': self.user.username,
+            'email': self.user.email,
+            'role': self.user.role,
+            'avatar': self.user.avatar.url if self.user.avatar else None,
+        }
+
+        return data

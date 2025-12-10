@@ -2,7 +2,8 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
-from .serializers import UserSerializer, RegisterSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -11,6 +12,11 @@ User = get_user_model()
 class RegisterThrottle(AnonRateThrottle):
     """Custom throttle cho registration - 5 lần/giờ"""
     scope = 'register'
+
+
+class LoginRateThrottle(AnonRateThrottle):
+    """Throttle cho login - Chỉ cho phép 5 lần thử đăng nhập mỗi phút từ 1 IP"""
+    rate = '5/min'
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -45,3 +51,14 @@ class UserViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data)
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """
+    API Đăng nhập tùy chỉnh:
+    - Có Captcha (qua Serializer)
+    - Có Rate Limit (5 request/phút)
+    - Trả về Access Token + Refresh Token + User Info
+    """
+    serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
