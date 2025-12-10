@@ -59,6 +59,26 @@ VNPAY_RETURN_URL = env('VNPAY_RETURN_URL')
 TURNSTILE_TEST_MODE = False
 
 
+# 4.5 Redis Security (Production)
+# ------------------------------------------------------------------------------
+# SECURITY WARNING: Redis MUST have password authentication in production
+# Validate that REDIS_URL includes authentication
+REDIS_URL = env('REDIS_URL')
+if not REDIS_URL:
+    raise ValueError("REDIS_URL must be set in production")
+
+# Check if Redis URL has password (basic validation)
+if 'redis://:' not in REDIS_URL and 'redis://default:' not in REDIS_URL:
+    import warnings
+    warnings.warn(
+        "WARNING: Redis URL does not appear to have authentication. "
+        "This is a CRITICAL security vulnerability in production. "
+        "Use format: redis://:password@host:port/0 or redis://default:password@host:port/0",
+        UserWarning,
+        stacklevel=2
+    )
+
+
 # 5. Error Tracking & Monitoring (Sentry)
 # ------------------------------------------------------------------------------
 SENTRY_DSN = env('SENTRY_DSN', default=None)

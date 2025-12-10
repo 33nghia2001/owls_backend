@@ -10,7 +10,6 @@ https://docs.djangoproject.com/en/6.0/howto/deployment/asgi/
 import os
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 
@@ -18,16 +17,18 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 # is populated before importing code that may import ORM models.
 django_asgi_app = get_asgi_application()
 
-# Import WebSocket routing
+# Import WebSocket routing and custom JWT middleware
 try:
     from apps.notifications import routing
+    from apps.notifications.middleware import JWTAuthMiddlewareStack
     websocket_urlpatterns = routing.websocket_urlpatterns
 except ImportError:
     websocket_urlpatterns = []
+    from channels.auth import AuthMiddlewareStack as JWTAuthMiddlewareStack
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AuthMiddlewareStack(
+    "websocket": JWTAuthMiddlewareStack(
         URLRouter(websocket_urlpatterns)
     ),
 })

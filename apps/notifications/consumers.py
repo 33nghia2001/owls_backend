@@ -1,5 +1,8 @@
 """
 WebSocket consumers for real-time notifications.
+
+SECURITY: Authentication is handled by JWTAuthMiddleware (in middleware.py).
+Never accept JWT tokens from URL query params to prevent token leakage in logs.
 """
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -13,28 +16,29 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for receiving real-time notifications.
     
-    Usage (frontend):
-        const ws = new WebSocket('ws://localhost:8000/ws/notifications/?token=' + accessToken);
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            console.log('Notification:', data);
-        };
+    SECURE Usage (frontend):
+        // Method 1: HttpOnly Cookie (Recommended - most secure)
+        // Ensure JWT is stored in HttpOnly cookie, not localStorage
+        const ws = new WebSocket('ws://localhost:8000/ws/notifications/');
+        // Cookie is automatically sent with WebSocket handshake
+        
+        // Method 2: One-time ticket (if cookie not available)
+        const ticketResponse = await fetch('/api/ws/ticket/', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + accessToken }
+        });
+        const { ticket } = await ticketResponse.json();
+        const ws = new WebSocket(`ws://localhost:8000/ws/notifications/?ticket=${ticket}`);
+        // Ticket expires in 30 seconds and is single-use only
     """
     
     async def connect(self):
         """Authenticate user and join their personal notification channel."""
-        # Get user from scope (JWT middleware should populate this)
+        # User is already authenticated by JWTAuthMiddleware
         self.user = self.scope['user']
         
+        # Reject unauthenticated connections immediately
         if not self.user.is_authenticated:
-            # Check for token in query params as fallback
-            query_string = self.scope.get('query_string', b'').decode()
-            if 'token=' in query_string:
-                # Extract token and authenticate
-                token = query_string.split('token=')[1].split('&')[0]
-                self.user = await self.authenticate_token(token)
-        
-        if not self.user or not self.user.is_authenticated:
             await self.close()
             return
         
@@ -85,17 +89,6 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         }))
     
     @database_sync_to_async
-    def authenticate_token(self, token):
-        """Authenticate user from JWT token in query params."""
-        from rest_framework_simplejwt.tokens import AccessToken
-        try:
-            access_token = AccessToken(token)
-            user_id = access_token['user_id']
-            return User.objects.get(id=user_id)
-        except Exception:
-            return None
-    
-    @database_sync_to_async
     def mark_notification_read(self, notification_id):
         """Mark a notification as read."""
         from apps.notifications.models import Notification
@@ -115,12 +108,14 @@ class CourseActivityConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for course-specific activity (new lessons, announcements, etc.)
     
-    Usage:
-        const ws = new WebSocket('ws://localhost:8000/ws/course/python-basics/?token=' + token);
+    SECURE Usage:
+        // Use HttpOnly cookie or one-time ticket (same as NotificationConsumer)
+        const ws = new WebSocket('ws://localhost:8000/ws/course/python-basics/');
     """
     
     async def connect(self):
         """Join course activity channel."""
+        # User authenticated by JWTAuthMiddleware
         self.user = self.scope['user']
         self.course_slug = self.scope['url_route']['kwargs']['course_slug']
         

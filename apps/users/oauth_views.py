@@ -24,7 +24,9 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
     
     def get(self, request):
-        redirect_uri = request.build_absolute_uri('/api/users/auth/google/callback/')
+        # SECURITY: Use hardcoded BACKEND_URL to prevent Host Header Injection
+        from django.conf import settings
+        redirect_uri = f"{settings.BACKEND_URL}/api/users/auth/google/callback/"
         strategy = load_strategy(request)
         backend = GoogleOAuth2(strategy=strategy, redirect_uri=redirect_uri)
         
@@ -53,7 +55,9 @@ class GoogleCallbackView(APIView):
             )
         
         try:
-            redirect_uri = request.build_absolute_uri('/api/users/auth/google/callback/')
+            # SECURITY: Use hardcoded BACKEND_URL to prevent Host Header Injection
+            from django.conf import settings
+            redirect_uri = f"{settings.BACKEND_URL}/api/users/auth/google/callback/"
             strategy = load_strategy(request)
             backend = GoogleOAuth2(strategy=strategy, redirect_uri=redirect_uri)
             

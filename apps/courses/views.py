@@ -16,18 +16,34 @@ from apps.core.permissions import IsInstructorOrReadOnly, IsEnrolledOrInstructor
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for categories with Redis caching.
-    Cache for 30 minutes as categories rarely change.
+    ViewSet for categories with versioned Redis caching.
+    Cache for 30 minutes, auto-invalidated via cache version on updates.
     """
     queryset = Category.objects.filter(is_active=True)
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
     
-    @method_decorator(cache_page(60 * 30))  # Cache 30 minutes
-    @method_decorator(vary_on_headers('Accept-Language'))
     def list(self, request, *args, **kwargs):
-        """Cached category list"""
-        return super().list(request, *args, **kwargs)
+        """
+        Cached category list with version-based invalidation.
+        SECURITY: Uses cache versioning to prevent DoS via delete_pattern().
+        """
+        from apps.courses.signals import CATEGORY_LIST_VERSION_KEY
+        
+        # Get current cache version
+        version = cache.get(CATEGORY_LIST_VERSION_KEY, 0)
+        cache_key = f'category_list_v{version}'
+        
+        # Try to get from cache
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return cached_data
+        
+        # Cache miss - fetch from database
+        response = super().list(request, *args, **kwargs)
+        cache.set(cache_key, response, timeout=60 * 30)  # 30 minutes
+        
+        return response
 
 
 class CourseViewSet(viewsets.ModelViewSet):
@@ -48,10 +64,30 @@ class CourseViewSet(viewsets.ModelViewSet):
             return CourseDetailSerializer
         return CourseListSerializer
 
-    @method_decorator(cache_page(60 * 15))  # Cache 15 minutes
     def list(self, request, *args, **kwargs):
-        """Cached course list"""
-        return super().list(request, *args, **kwargs)
+        """
+        Cached course list with version-based invalidation.
+        SECURITY: Uses cache versioning to prevent DoS via delete_pattern().
+        """
+        from apps.courses.signals import COURSE_LIST_VERSION_KEY
+        
+        # Get current cache version
+        version = cache.get(COURSE_LIST_VERSION_KEY, 0)
+        
+        # Include query params in cache key for filtered results
+        query_params = request.GET.urlencode()
+        cache_key = f'course_list_v{version}_{query_params}'
+        
+        # Try to get from cache
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return cached_data
+        
+        # Cache miss - fetch from database
+        response = super().list(request, *args, **kwargs)
+        cache.set(cache_key, response, timeout=60 * 15)  # 15 minutes
+        
+        return response
     
     def retrieve(self, request, *args, **kwargs):
         """Retrieve with caching"""

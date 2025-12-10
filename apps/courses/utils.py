@@ -8,14 +8,18 @@ from datetime import timedelta
 from django.utils import timezone
 
 
-def generate_signed_video_url(public_id, duration_hours=1, streaming_format='hls'):
+def generate_signed_video_url(public_id, duration_hours=None, streaming_format='hls'):
     """
     Generate a signed URL for HLS/DASH video streaming with expiration time.
     Uses adaptive bitrate streaming for better performance and security.
     
+    SECURITY: Default duration reduced to 10 minutes for HLS to prevent replay attacks.
+    HLS clients automatically refresh the manifest every 5-10 seconds, so short
+    expiration doesn't affect playback but prevents URL sharing.
+    
     Args:
         public_id: Cloudinary public_id of the video
-        duration_hours: URL expiration time in hours (default: 1 hour)
+        duration_hours: URL expiration time in hours (default: 10 min for HLS, 1 hour for MP4)
         streaming_format: 'hls' (m3u8) or 'dash' (mpd) - default: hls
     
     Returns:
@@ -23,6 +27,11 @@ def generate_signed_video_url(public_id, duration_hours=1, streaming_format='hls
     """
     if not public_id:
         return None
+    
+    # SECURITY: Short expiration for HLS to prevent URL sharing/replay attacks
+    # HLS players fetch manifest periodically, so short duration is safe
+    if duration_hours is None:
+        duration_hours = 1.0 if streaming_format == 'mp4' else (10 / 60)  # 10 minutes for HLS
     
     # Calculate expiration timestamp (Unix timestamp)
     expires_at = int((timezone.now() + timedelta(hours=duration_hours)).timestamp())

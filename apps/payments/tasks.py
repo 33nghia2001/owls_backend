@@ -1,5 +1,8 @@
 """
-Celery tasks for asynchronous processing
+Celery tasks for asynchronous processing with rate limiting.
+
+SECURITY: Tasks are rate-limited to prevent DoS attacks on email servers
+and Redis queue flooding.
 """
 from celery import shared_task
 from django.core.mail import send_mail
@@ -13,10 +16,16 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(
+    bind=True, 
+    max_retries=3,
+    rate_limit='10/m'  # SECURITY: Max 10 emails per minute to prevent abuse
+)
 def send_enrollment_confirmation_email(self, enrollment_id):
     """
     Send enrollment confirmation email to student.
+    
+    SECURITY: Rate limited to 10/minute to prevent email server abuse.
     Async task to avoid blocking payment response.
     """
     try:
@@ -66,10 +75,16 @@ def send_enrollment_confirmation_email(self, enrollment_id):
         raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(
+    bind=True, 
+    max_retries=3,
+    rate_limit='10/m'  # SECURITY: Max 10 emails per minute
+)
 def send_payment_success_email(self, payment_id):
     """
     Send payment confirmation email.
+    
+    SECURITY: Rate limited to prevent email server abuse.
     """
     try:
         from apps.payments.models import Payment
@@ -174,10 +189,12 @@ def cleanup_expired_payments():
     return count
 
 
-@shared_task
+@shared_task(rate_limit='20/m')  # SECURITY: Max 20 notifications per minute
 def send_review_reply_notification(reply_id):
     """
     Notify student when instructor replies to their review.
+    
+    SECURITY: Rate limited to prevent notification spam.
     """
     try:
         from apps.reviews.models import InstructorReply

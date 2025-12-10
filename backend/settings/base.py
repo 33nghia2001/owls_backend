@@ -173,6 +173,9 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=["http://localho
 CORS_ALLOW_CREDENTIALS = True
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
 
+# Backend URL (for OAuth redirects - prevent Host Header Injection)
+BACKEND_URL = env('BACKEND_URL', default='http://localhost:8000')
+
 # 11. Redis & Celery & Channels
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
 
