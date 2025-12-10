@@ -1,10 +1,17 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from .serializers import UserSerializer, RegisterSerializer
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+
+
+class RegisterThrottle(AnonRateThrottle):
+    """Custom throttle cho registration - 5 lần/giờ"""
+    scope = 'register'
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -14,6 +21,12 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action == 'create': # Đăng ký
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
+    
+    def get_throttles(self):
+        """Áp dụng throttle cho registration"""
+        if self.action == 'create':
+            return [RegisterThrottle()]
+        return super().get_throttles()
 
     def get_serializer_class(self):
         if self.action == 'create':

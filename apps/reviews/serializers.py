@@ -51,16 +51,6 @@ class ReviewSerializer(serializers.ModelSerializer):
         return value
     
     def validate_rating(self, value):
-        """Sanitize comment to prevent XSS attacks"""
-        return sanitize_html(value)
-    
-    def validate_title(self, value):
-        """Sanitize title to prevent XSS attacks"""
-        if value:
-            return sanitize_html(value)
-        return value
-    
-    def validate_rating(self, value):
         """Validate rating is between 1 and 5"""
         if value < 1 or value > 5:
             raise serializers.ValidationError("Rating must be between 1 and 5")

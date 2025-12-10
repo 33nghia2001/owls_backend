@@ -59,6 +59,15 @@ class PaymentSerializer(serializers.ModelSerializer):
                 status='pending',
                 created_at__lt=timezone.now() - timedelta(minutes=15)
             )
+            
+            # Giảm used_count cho các discount bị expire (release reservation)
+            for payment in old_pending:
+                if payment.discount:
+                    from django.db.models import F
+                    Discount.objects.filter(id=payment.discount.id).update(
+                        used_count=F('used_count') - 1
+                    )
+            
             old_pending.update(status='expired')
             
             # Kiểm tra còn pending payment mới (< 15 phút)

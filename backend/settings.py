@@ -173,6 +173,7 @@ REST_FRAMEWORK = {
         'user': '1000/day',          # User đã đăng nhập: 1000 requests/ngày
         'review_create': '10/day',   # Tạo review: 10 lần/ngày
         'payment': '20/hour',        # Payment: 20 lần/giờ
+        'register': '5/hour',        # Register: 5 lần/giờ (chống spam)
     }
 }
 

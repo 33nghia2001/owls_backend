@@ -45,6 +45,23 @@ class PaymentViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Tạo payment và generate VNPay URL"""
+        discount = serializer.validated_data.get('discount')
+        
+        # CRITICAL: Reserve discount slot (Flash Mob Attack Prevention)
+        if discount:
+            from django.db.models import F
+            # Tăng used_count ngay khi tạo payment (giữ chỗ)
+            updated = Discount.objects.filter(
+                id=discount.id,
+                used_count__lt=F('usage_limit')  # Chỉ tăng nếu chưa vượt quá
+            ).update(used_count=F('used_count') + 1)
+            
+            if not updated:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({
+                    'discount': 'This discount code has reached its usage limit.'
+                })
+        
         # Lưu payment với status pending
         payment = serializer.save(
             user=self.request.user,
@@ -197,12 +214,8 @@ class VNPayReturnView(APIView):
                     payment.gateway_transaction_id = vnpay_params.get('vnp_TransactionNo')
                     payment.save()
                     
-                    # Xử lý Discount Usage
+                    # Tạo DiscountUsage record (used_count đã tăng khi create)
                     if payment.discount:
-                        from django.db.models import F
-                        Discount.objects.filter(id=payment.discount.id).update(
-                            used_count=F('used_count') + 1
-                        )
                         DiscountUsage.objects.create(
                             user=payment.user,
                             discount=payment.discount,
@@ -273,14 +286,8 @@ class VNPayIPNView(APIView):
                     payment.gateway_transaction_id = vnpay_params.get('vnp_TransactionNo')
                     payment.save()
                     
-                    # Xử lý Discount Usage (CRITICAL: Race Condition Protection)
+                    # Tạo DiscountUsage record (used_count đã tăng khi create payment)
                     if payment.discount:
-                        from django.db.models import F
-                        # Dùng F() expression để tăng used_count an toàn
-                        Discount.objects.filter(id=payment.discount.id).update(
-                            used_count=F('used_count') + 1
-                        )
-                        # Tạo DiscountUsage record
                         DiscountUsage.objects.create(
                             user=payment.user,
                             discount=payment.discount,
@@ -298,6 +305,12 @@ class VNPayIPNView(APIView):
                         }
                     )
             else:
+                # Nếu payment failed, giảm used_count xuống (release reservation)
+                if payment.discount:
+                    from django.db.models import F
+                    Discount.objects.filter(id=payment.discount.id).update(
+                        used_count=F('used_count') - 1
+                    )
                 payment.status = 'failed'
                 payment.save()
             
