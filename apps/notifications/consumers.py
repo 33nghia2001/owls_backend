@@ -104,9 +104,82 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             return False
 
 
+class CourseConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for course-specific channels (real-time course updates).
+    Used by tests to verify enrollment-based access control.
+    
+    SECURE Usage:
+        // Connect to course-specific channel (requires enrollment)
+        const ws = new WebSocket('ws://localhost:8000/ws/courses/123/');
+    """
+    
+    async def connect(self):
+        """Join course channel if user is enrolled."""
+        # User authenticated by JWTAuthMiddleware
+        self.user = self.scope['user']
+        self.course_id = self.scope['url_route']['kwargs']['course_id']
+        
+        if not self.user.is_authenticated:
+            await self.close()
+            return
+        
+        # Verify user is enrolled in this course
+        is_enrolled = await self.is_enrolled()
+        if not is_enrolled:
+            await self.close()
+            return
+        
+        self.room_group_name = f'course_{self.course_id}'
+        
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+        
+        await self.accept()
+        
+        # Send connection confirmation
+        await self.send(text_data=json.dumps({
+            'type': 'connection_established',
+            'message': f'Connected to course {self.course_id}'
+        }))
+    
+    async def disconnect(self, close_code):
+        """Leave course channel."""
+        if hasattr(self, 'room_group_name'):
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name
+            )
+    
+    async def course_message(self, event):
+        """Broadcast course messages to all enrolled students."""
+        await self.send(text_data=json.dumps({
+            'type': 'course_message',
+            'message': event['message'],
+            'course_id': event.get('course_id')
+        }))
+    
+    @database_sync_to_async
+    def is_enrolled(self):
+        """Verify user is enrolled in the course."""
+        from apps.enrollments.models import Enrollment
+        try:
+            # CRITICAL: Use 'student' field, not 'user' (fixed bug)
+            return Enrollment.objects.filter(
+                student=self.user,
+                course_id=self.course_id,
+                status='active'
+            ).exists()
+        except Exception:
+            return False
+
+
 class CourseActivityConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for course-specific activity (new lessons, announcements, etc.)
+    Uses course slug instead of ID.
     
     SECURE Usage:
         // Use HttpOnly cookie or one-time ticket (same as NotificationConsumer)

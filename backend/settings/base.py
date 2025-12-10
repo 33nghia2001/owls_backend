@@ -103,6 +103,12 @@ DATABASES = {
     'default': env.db('DATABASE_URL', default=f'sqlite:///{BASE_DIR}/db.sqlite3')
 }
 
+# Test database configuration - avoid locking issues
+if env.bool('DJANGO_DEBUG', default=False):
+    DATABASES['default']['TEST'] = {
+        'NAME': 'test_owls_db',  # Use different name to avoid conflicts
+    }
+
 # 7. Localization
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
