@@ -137,13 +137,35 @@ def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]
             
             # 2. Check Idempotency (Tránh xử lý lặp lại)
             if payment.status == 'completed':
+                logger.info(f"Payment {transaction_id} already completed (idempotent check)")
                 return {'status': 'success', 'code': '00', 'message': 'Payment already completed'}
             
             if payment.status == 'failed':
+                logger.warning(f"Payment {transaction_id} previously failed")
                 return {'status': 'error', 'code': '01', 'message': 'Payment previously failed'}
             
+            # EDGE CASE FIX: Handle expired payments that are actually paid
+            # Scenario: Cronjob marked payment as 'expired' seconds before VNPay IPN arrived
+            # Solution: Accept the payment if VNPay confirms success (user already paid)
+            vnp_response_code = vnp_params.get('vnp_ResponseCode')
+            
             if payment.status == 'cancelled':
+                logger.warning(f"Payment {transaction_id} was cancelled by user")
                 return {'status': 'error', 'code': '02', 'message': 'Payment was cancelled'}
+            
+            if payment.status == 'expired':
+                if vnp_response_code == '00':
+                    # VNPay confirms successful payment - Accept it (prevent customer loss)
+                    logger.warning(
+                        f"EDGE CASE: Payment {transaction_id} was expired but VNPay confirmed success. "
+                        f"Re-activating payment to prevent customer fund loss. "
+                        f"User: {payment.user.email}, Course: {payment.course.title}"
+                    )
+                    # Continue processing - payment.status will be updated to 'completed' below
+                else:
+                    # Payment expired AND VNPay says failed - correctly reject
+                    logger.info(f"Payment {transaction_id} expired and VNPay confirmation failed")
+                    return {'status': 'error', 'code': '03', 'message': 'Payment expired'}
             
             # 3. Check Amount (So sánh integer để chính xác)
             incoming_amount = int(vnp_params.get('vnp_Amount', '0'))
@@ -153,6 +175,10 @@ def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]
                 # Đánh dấu failed nếu sai tiền (nghi vấn hack)
                 payment.status = 'failed'
                 payment.save()
+                logger.error(
+                    f"Payment {transaction_id} amount mismatch! "
+                    f"Expected: {expected_amount}, Got: {incoming_amount}"
+                )
                 return {'status': 'error', 'code': '04', 'message': 'Invalid Amount'}
             
             # 4. Process Logic
@@ -164,14 +190,21 @@ def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]
                 if created_enrollment:
                     transaction.on_commit(lambda eid=enrollment_id: send_enrollment_confirmation_email.delay(eid))
                 
+                logger.info(
+                    f"Payment {transaction_id} confirmed successfully. "
+                    f"User: {payment.user.email}, Course: {payment.course.title}, "
+                    f"Amount: {payment.amount} VND"
+                )
                 return {'status': 'success', 'code': '00', 'message': 'Confirm Success'}
             else:
+                logger.error(f"Payment {transaction_id} failed from gateway. Code: {vnp_response_code}")
                 return {'status': 'error', 'code': vnp_params.get('vnp_ResponseCode'), 'message': 'Payment Failed from Gateway'}
 
     except Payment.DoesNotExist:
+        logger.error(f"Payment {transaction_id} not found in database")
         return {'status': 'error', 'code': '01', 'message': 'Order not found'}
     except Exception as e:
-        logger.error(f"Payment Confirmation Error: {str(e)}", exc_info=True)
+        logger.error(f"Payment Confirmation Error for {transaction_id}: {str(e)}", exc_info=True)
         return {'status': 'error', 'code': '99', 'message': 'Unknown Error'}
 
 

@@ -1,6 +1,8 @@
 """
 Google OAuth authentication views.
 """
+import uuid
+import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -12,6 +14,7 @@ from social_core.exceptions import AuthException, AuthCanceled
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class GoogleLoginView(APIView):
@@ -103,19 +106,31 @@ class GoogleCallbackView(APIView):
         # Check if user exists
         try:
             user = User.objects.get(email=email)
+            
+            # SECURITY: Only allow account linking if email was verified
+            # Prevents account takeover via pre-registration with victim's email
+            if not user.email_verified:
+                logger.warning(
+                    f"Blocked Google OAuth login for unverified email account: {email}. "
+                    "Potential account takeover attempt."
+                )
+                raise ValueError(
+                    "An account with this email exists but is not verified. "
+                    "Please verify your email or reset your password first."
+                )
+            
             return user
         except User.DoesNotExist:
             pass
         
-        # Create new user
-        username = email.split('@')[0]
+        # SECURITY: Generate random username to prevent enumeration
+        # Old method: username = email.split('@')[0] allows attackers to guess usernames
+        # New method: Use UUID for unpredictable usernames
+        username = f"user_{uuid.uuid4().hex[:12]}"
         
-        # Ensure unique username
-        base_username = username
-        counter = 1
+        # Ensure uniqueness (extremely unlikely collision with UUID)
         while User.objects.filter(username=username).exists():
-            username = f"{base_username}{counter}"
-            counter += 1
+            username = f"user_{uuid.uuid4().hex[:12]}"
         
         user = User.objects.create_user(
             username=username,
@@ -125,5 +140,7 @@ class GoogleCallbackView(APIView):
             is_active=True,
             email_verified=True  # Google already verified email
         )
+        
+        logger.info(f"Created new user via Google OAuth: {email} (username: {username})")
         
         return user

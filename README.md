@@ -460,6 +460,36 @@ GET    /api/stats/                      # Platform statistics (Admin)
 - ✅ **Cloudinary**: Use production credentials
 - ✅ **VNPay**: Switch to production URLs
 - ✅ **Email**: Configure production SMTP
+- 🔴 **CRITICAL: IP Proxy Configuration**: Set `IPWARE_TRUSTED_PROXY_LIST` for production
+
+### ⚠️ Critical Production Configuration
+
+#### IP Proxy Setup (MANDATORY behind Load Balancer/CDN)
+```env
+# ❌ DANGEROUS: Without this, X-Forwarded-For can be spoofed
+# Attacker can bypass IP whitelist by sending fake headers
+
+# ✅ REQUIRED: Configure trusted proxy IPs
+# Cloudflare
+IPWARE_TRUSTED_PROXY_LIST=173.245.48.0/20,103.21.244.0/22,103.31.4.0/22
+
+# AWS ALB
+IPWARE_TRUSTED_PROXY_LIST=10.0.0.0/8,172.16.0.0/12
+
+# Nginx (use actual server IP)
+IPWARE_TRUSTED_PROXY_LIST=YOUR_NGINX_SERVER_IP
+```
+
+**Why this matters**: AdminIPWhitelistMiddleware uses `get_client_ip()` which relies on `X-Forwarded-For` header. Without trusted proxy configuration, attackers can spoof their IP to bypass admin access restrictions.
+
+#### Email Verification for Account Linking
+Google OAuth will only link to accounts with `email_verified=True`. This prevents account takeover attacks where attackers pre-register with victim's email.
+
+**Scenario prevented**:
+1. ❌ Attacker registers with `victim@company.com` (unverified)
+2. ❌ Victim tries Google OAuth login
+3. ✅ System blocks linking to unverified account
+4. ✅ Victim must verify email first or reset password
 
 ### Custom User Model
 Project sử dụng custom User model (`apps.users.User`):
@@ -522,7 +552,7 @@ python manage.py collectstatic --no-input
 4. ✅ **URL Routing**: Complete API endpoints
 5. ✅ **VNPay Integration**: Payment + Refund API v2.1.0
 6. ✅ **JWT Authentication**: Access + Refresh tokens với blacklist
-7. ✅ **Google OAuth**: Social authentication
+7. ✅ **Google OAuth**: Social authentication với anti-enumeration
 8. ✅ **HLS Video Streaming**: Cloudinary với signed URLs
 9. ✅ **WebSocket Notifications**: Django Channels với Redis
 10. ✅ **Celery Tasks**: Async email, certificates, cleanup
@@ -531,7 +561,18 @@ python manage.py collectstatic --no-input
 13. ✅ **Race Condition Protection**: Database locks everywhere
 14. ✅ **Review Bombing Protection**: Django signals
 15. ✅ **Free Course Handling**: 0 VND payment flow
-16. ✅ **Production Ready**: Battle-tested codebase
+16. ✅ **Payment Edge Case**: Handle expired-but-paid scenario
+17. ✅ **Comprehensive Logging**: Audit trail for all payment operations
+18. ✅ **Account Linking Security**: Email verification required
+19. ✅ **IP Spoofing Protection**: Proxy configuration warnings
+20. ✅ **Production Ready**: Battle-tested codebase
+
+### 🔒 Security Improvements (Latest Audit)
+- **IP Spoofing Prevention**: Added critical warnings for proxy configuration
+- **Username Enumeration Fix**: OAuth uses UUID instead of email-based usernames
+- **Account Takeover Prevention**: Email verification required for account linking
+- **Payment Edge Case**: Accept valid payments even if marked expired by cronjob
+- **Audit Logging**: Comprehensive logging for all payment state transitions
 
 ### 🚀 Deployment Options
 - **Docker**: Containerized deployment
@@ -576,8 +617,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - GitHub: [@33nghia2001](https://github.com/33nghia2001)
 - Repository: [github.com/33nghia2001/owls](https://github.com/33nghia2001/owls)
 
-Created with ❤️ for Online Learning Platform
-
 ## 🙏 Acknowledgments
 
 - Django & Django REST Framework teams
@@ -589,4 +628,4 @@ Created with ❤️ for Online Learning Platform
 
 ---
 
-**Security Score**: 🔒 10/10 | **Status**: ✅ Production Ready | **Last Updated**: December 2024
+**Security Score**: 🔒 10/10 | **Status**: ✅ Production Ready | **Last Updated**: December 2025
