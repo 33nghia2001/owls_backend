@@ -160,8 +160,9 @@ class CourseActivityConsumer(AsyncWebsocketConsumer):
         from apps.courses.models import Course
         try:
             course = Course.objects.get(slug=self.course_slug)
+            # BUG FIX: Enrollment model uses 'student' field, not 'user'
             return Enrollment.objects.filter(
-                user=self.user,
+                student=self.user,  # Corrected from user -> student
                 course=course,
                 status='active'
             ).exists()

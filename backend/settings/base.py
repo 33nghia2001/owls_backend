@@ -156,6 +156,7 @@ REST_FRAMEWORK = {
         'review_create': '10/day',
         'payment': '5/hour',
         'register': '5/hour',
+        'ws_ticket': '10/min',  # WebSocket ticket generation
     }
 }
 
@@ -175,6 +176,11 @@ FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
 
 # Backend URL (for OAuth redirects - prevent Host Header Injection)
 BACKEND_URL = env('BACKEND_URL', default='http://localhost:8000')
+
+# WebSocket Base URL (for mobile/web clients)
+# Development: ws://localhost:8000
+# Production: wss://api.yourdomain.com
+WS_BASE_URL = env('WS_BASE_URL', default='ws://localhost:8000')
 
 # 10.5. IP Address Detection (for rate limiting behind proxies/CDN)
 # SECURITY FIX: Configure trusted proxies to prevent IP spoofing

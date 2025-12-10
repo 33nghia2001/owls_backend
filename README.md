@@ -601,15 +601,44 @@ python manage.py collectstatic --no-input
 - **Digital Ocean**: Droplet deployment
 - **Vercel/Netlify**: Frontend hosting
 
-### 📚 Additional Features (Optional)
+### ⚠️ Known Limitations & Roadmap
+
+**Payment Methods**:
+- ✅ VNPay: Fully implemented (Payment + Refund API v2.1.0)
+- ✅ Free Courses: Auto-enrollment supported
+- ⏳ MoMo: Enum defined, implementation pending
+- ⏳ Credit Card: Enum defined, implementation pending
+- ⏳ Bank Transfer: Enum defined, implementation pending
+
+**Testing & Quality**:
+- ⚠️ Unit Tests: Not yet implemented (high priority for v2.0)
+- ⚠️ Integration Tests: Not yet implemented
+- ⚠️ Code Coverage: 0% (target: 80%+)
+- 📋 Recommended: Add pytest + pytest-django + pytest-cov
+
+**DevOps & Deployment**:
+- ⚠️ Docker: Not yet containerized
+- ⚠️ CI/CD: No GitHub Actions / GitLab CI yet
+- ⚠️ Monitoring: Sentry configured, but no health check endpoint
+- 📋 Recommended: Add Dockerfile, docker-compose.yml, k8s manifests
+
+**Code Quality Tools**:
+- ⚠️ Linting: No ruff/flake8/black configuration
+- ⚠️ Pre-commit: No hooks configured
+- ⚠️ Type Hints: Partial coverage (~30%)
+- 📋 Recommended: Add pyproject.toml with ruff + black + isort
+
+### 📚 Future Features (Optional)
 - [ ] API Documentation với drf-spectacular/Swagger
 - [ ] Elasticsearch cho advanced search
-- [ ] Social media sharing
-- [ ] Mobile app integration
+- [ ] Additional payment gateways (MoMo, Credit Card)
+- [ ] Mobile app integration (React Native / Flutter)
 - [ ] Analytics dashboard
 - [ ] Live streaming classes
 - [ ] Discussion forums
 - [ ] Gamification (badges, points)
+- [ ] Health check endpoint (`/healthz/`)
+- [ ] Comprehensive test suite (pytest)
 
 ## 🤝 Contributing
 
