@@ -167,9 +167,10 @@ def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]
                     logger.info(f"Payment {transaction_id} expired and VNPay confirmation failed")
                     return {'status': 'error', 'code': '03', 'message': 'Payment expired'}
             
-            # 3. Check Amount (So sánh integer để chính xác)
+            # 3. Check Amount (Safe Decimal comparison to prevent rounding errors)
+            # Use to_integral_value() to avoid float rounding issues with Decimal * 100
             incoming_amount = int(vnp_params.get('vnp_Amount', '0'))
-            expected_amount = int(payment.amount * 100)
+            expected_amount = int((payment.amount * 100).to_integral_value())
             
             if incoming_amount != expected_amount:
                 # Đánh dấu failed nếu sai tiền (nghi vấn hack)
@@ -177,7 +178,8 @@ def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]
                 payment.save()
                 logger.error(
                     f"Payment {transaction_id} amount mismatch! "
-                    f"Expected: {expected_amount}, Got: {incoming_amount}"
+                    f"Expected: {expected_amount}, Got: {incoming_amount}, "
+                    f"Original Decimal: {payment.amount}"
                 )
                 return {'status': 'error', 'code': '04', 'message': 'Invalid Amount'}
             

@@ -61,21 +61,29 @@ TURNSTILE_TEST_MODE = False
 
 # 4.5 Redis Security (Production)
 # ------------------------------------------------------------------------------
-# SECURITY WARNING: Redis MUST have password authentication in production
-# Validate that REDIS_URL includes authentication
+# CRITICAL SECURITY: Redis MUST have password authentication in production
+# Unauthenticated Redis is a Remote Code Execution (RCE) vulnerability
 REDIS_URL = env('REDIS_URL')
 if not REDIS_URL:
     raise ValueError("REDIS_URL must be set in production")
 
-# Check if Redis URL has password (basic validation)
+# HARD FAIL: Validate that Redis URL includes authentication
+# Redis without password allows attackers to:
+# - Execute arbitrary commands (CONFIG SET, EVAL)
+# - Overwrite critical files (RDB dump, AOF)
+# - Dump all cached data including session tokens
 if 'redis://:' not in REDIS_URL and 'redis://default:' not in REDIS_URL:
-    import warnings
-    warnings.warn(
-        "WARNING: Redis URL does not appear to have authentication. "
-        "This is a CRITICAL security vulnerability in production. "
-        "Use format: redis://:password@host:port/0 or redis://default:password@host:port/0",
-        UserWarning,
-        stacklevel=2
+    raise RuntimeError(
+        "CRITICAL SECURITY ERROR: Redis authentication not detected in production!\n"
+        "Unauthenticated Redis is a Remote Code Execution (RCE) vector.\n\n"
+        "REQUIRED ACTION:\n"
+        "Update REDIS_URL in .env with authentication:\n"
+        "  - Format with password: redis://:your_strong_password@host:port/0\n"
+        "  - Format with user+password: redis://default:your_strong_password@host:port/0\n"
+        "  - AWS ElastiCache: Use AUTH token in connection string\n"
+        "  - Google Cloud Memorystore: Enable AUTH mode\n\n"
+        "Never run Redis in production without AUTH enabled.\n"
+        "Application startup aborted for security."
     )
 
 

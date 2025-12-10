@@ -24,16 +24,21 @@ class AdminIPWhitelistMiddleware:
         whitelist = os.environ.get('ADMIN_IP_WHITELIST', '')
         self.allowed_ips = [ip.strip() for ip in whitelist.split(',') if ip.strip()]
         
-        # SECURITY WARNING: In production, verify proxy configuration exists
+        # CRITICAL SECURITY: FORCE proper proxy configuration in production
         if not settings.DEBUG:
             trusted_proxies = getattr(settings, 'IPWARE_META_PRECEDENCE_ORDER', None)
             if not trusted_proxies:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.critical(
-                    "SECURITY RISK: IPWARE_TRUSTED_PROXY_LIST not configured in production! "
-                    "IP-based access control can be bypassed via X-Forwarded-For spoofing. "
-                    "Set IPWARE_TRUSTED_PROXY_LIST in .env immediately."
+                # HARD FAIL: Don't allow application to start without proper security config
+                raise RuntimeError(
+                    "CRITICAL SECURITY ERROR: IPWARE_TRUSTED_PROXY_LIST not configured in production!\n"
+                    "IP-based access control can be bypassed via X-Forwarded-For spoofing.\n"
+                    "This is a Remote Code Execution (RCE) vector allowing admin panel takeover.\n\n"
+                    "REQUIRED ACTION:\n"
+                    "Set IPWARE_TRUSTED_PROXY_LIST in .env with your Load Balancer/CDN IP ranges:\n"
+                    "  - Cloudflare: IPWARE_TRUSTED_PROXY_LIST=173.245.48.0/20,103.21.244.0/22\n"
+                    "  - AWS ALB: IPWARE_TRUSTED_PROXY_LIST=10.0.0.0/8,172.16.0.0/12\n"
+                    "  - Nginx: IPWARE_TRUSTED_PROXY_LIST=<your_nginx_server_ip>\n\n"
+                    "Application startup aborted for security."
                 )
 
     def __call__(self, request):
@@ -45,13 +50,6 @@ class AdminIPWhitelistMiddleware:
             
             # Get real client IP using django-ipware 
             client_ip, is_routable = get_client_ip(request)
-            
-            # PRODUCTION SAFETY: Block if proxy config missing
-            if not settings.DEBUG and not getattr(settings, 'IPWARE_META_PRECEDENCE_ORDER', None):
-                return HttpResponseForbidden(
-                    '<h1>503 Service Unavailable</h1>'
-                    '<p>Admin panel temporarily unavailable due to security configuration.</p>'
-                )
             
             # Block if IP not in whitelist
             if self.allowed_ips and client_ip not in self.allowed_ips:

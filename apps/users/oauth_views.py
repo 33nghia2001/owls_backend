@@ -12,6 +12,8 @@ from social_django.utils import load_strategy, load_backend
 from social_core.backends.google import GoogleOAuth2
 from social_core.exceptions import AuthException, AuthCanceled
 from django.contrib.auth import get_user_model
+from django.urls import reverse
+from django.conf import settings
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -27,9 +29,10 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
     
     def get(self, request):
-        # SECURITY: Use hardcoded BACKEND_URL to prevent Host Header Injection
-        from django.conf import settings
-        redirect_uri = f"{settings.BACKEND_URL}/api/users/auth/google/callback/"
+        # SECURITY: Use BACKEND_URL to prevent Host Header Injection
+        # Use reverse() for maintainability when URL structure changes
+        callback_path = reverse('google_callback')
+        redirect_uri = f"{settings.BACKEND_URL}{callback_path}"
         strategy = load_strategy(request)
         backend = GoogleOAuth2(strategy=strategy, redirect_uri=redirect_uri)
         
@@ -58,9 +61,10 @@ class GoogleCallbackView(APIView):
             )
         
         try:
-            # SECURITY: Use hardcoded BACKEND_URL to prevent Host Header Injection
-            from django.conf import settings
-            redirect_uri = f"{settings.BACKEND_URL}/api/users/auth/google/callback/"
+            # SECURITY: Use BACKEND_URL to prevent Host Header Injection
+            # Use reverse() for maintainability when URL structure changes
+            callback_path = reverse('google_callback')
+            redirect_uri = f"{settings.BACKEND_URL}{callback_path}"
             strategy = load_strategy(request)
             backend = GoogleOAuth2(strategy=strategy, redirect_uri=redirect_uri)
             
