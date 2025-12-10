@@ -25,12 +25,14 @@ class AdminIPWhitelistMiddleware:
         self.allowed_ips = [ip.strip() for ip in whitelist.split(',') if ip.strip()]
         
         # CRITICAL SECURITY: FORCE proper proxy configuration in production
+        # BUG FIX: Check IPWARE_TRUSTED_PROXY_LIST (the actual IP list), NOT IPWARE_META_PRECEDENCE_ORDER
+        # IPWARE_META_PRECEDENCE_ORDER is always defined in base.py, so checking it is useless
         if not settings.DEBUG:
-            trusted_proxies = getattr(settings, 'IPWARE_META_PRECEDENCE_ORDER', None)
-            if not trusted_proxies:
+            trusted_proxy_list = getattr(settings, 'IPWARE_TRUSTED_PROXY_LIST', [])
+            if not trusted_proxy_list:  # Empty list [] evaluates to False
                 # HARD FAIL: Don't allow application to start without proper security config
                 raise RuntimeError(
-                    "CRITICAL SECURITY ERROR: IPWARE_TRUSTED_PROXY_LIST not configured in production!\n"
+                    "CRITICAL SECURITY ERROR: IPWARE_TRUSTED_PROXY_LIST is empty in production!\n"
                     "IP-based access control can be bypassed via X-Forwarded-For spoofing.\n"
                     "This is a Remote Code Execution (RCE) vector allowing admin panel takeover.\n\n"
                     "REQUIRED ACTION:\n"
@@ -38,7 +40,8 @@ class AdminIPWhitelistMiddleware:
                     "  - Cloudflare: IPWARE_TRUSTED_PROXY_LIST=173.245.48.0/20,103.21.244.0/22\n"
                     "  - AWS ALB: IPWARE_TRUSTED_PROXY_LIST=10.0.0.0/8,172.16.0.0/12\n"
                     "  - Nginx: IPWARE_TRUSTED_PROXY_LIST=<your_nginx_server_ip>\n\n"
-                    "Application startup aborted for security."
+                    "Application startup aborted for security.\n"
+                    "If you are NOT behind a proxy/CDN, you can set IPWARE_TRUSTED_PROXY_LIST=127.0.0.1"
                 )
 
     def __call__(self, request):

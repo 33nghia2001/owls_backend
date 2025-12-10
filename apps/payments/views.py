@@ -203,11 +203,14 @@ def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]
                 return {'status': 'error', 'code': vnp_params.get('vnp_ResponseCode'), 'message': 'Payment Failed from Gateway'}
 
     except Payment.DoesNotExist:
+        # SECURITY: Use generic error message to prevent Oracle attacks
+        # Don't leak whether transaction_id exists in database
         logger.error(f"Payment {transaction_id} not found in database")
-        return {'status': 'error', 'code': '01', 'message': 'Order not found'}
+        return {'status': 'error', 'code': '99', 'message': 'Invalid Request'}
     except Exception as e:
+        # Generic error for all unexpected exceptions
         logger.error(f"Payment Confirmation Error for {transaction_id}: {str(e)}", exc_info=True)
-        return {'status': 'error', 'code': '99', 'message': 'Unknown Error'}
+        return {'status': 'error', 'code': '99', 'message': 'Invalid Request'}
 
 
 # ==============================================================================

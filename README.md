@@ -95,12 +95,31 @@ python -m venv .venv
 source .venv/bin/activate      # Linux/Mac
 ```
 
-### 3. Cài đặt dependencies
+### 3. Cài đặt system dependencies
+**CRITICAL**: `python-magic` requires system library `libmagic` for file validation
+
+```bash
+# Linux (Debian/Ubuntu)
+sudo apt-get update
+sudo apt-get install libmagic1
+
+# Linux (Alpine - for Docker)
+apk add libmagic
+
+# macOS
+brew install libmagic
+
+# Windows
+# Download from: https://github.com/pidydx/libmagicwin64
+# Or use: pip install python-magic-bin (includes DLL)
+```
+
+### 4. Cài đặt Python dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Cấu hình biến môi trường
+### 5. Cấu hình biến môi trường
 Tạo file `.env` từ `.env.example` và cập nhật các giá trị:
 
 ```env
@@ -149,7 +168,7 @@ EMAIL_HOST_PASSWORD=your-app-password
 FRONTEND_URL=http://localhost:3000
 ```
 
-### 5. Setup PostgreSQL (recommended)
+### 6. Setup PostgreSQL (recommended)
 ```bash
 # Install PostgreSQL
 # Create database
@@ -159,7 +178,7 @@ createdb owls_db
 DATABASE_URL=postgresql://postgres:password@localhost:5432/owls_db
 ```
 
-### 6. Setup Redis
+### 7. Setup Redis
 ```bash
 # Install Redis
 # Windows: Use Redis for Windows or WSL
@@ -173,33 +192,33 @@ redis-server
 redis-cli ping  # Should return PONG
 ```
 
-### 7. Chạy migrations
+### 8. Chạy migrations
 ```bash
 python manage.py makemigrations
 python manage.py migrate
 ```
 
-### 8. Tạo superuser
+### 9. Tạo superuser
 ```bash
 python manage.py createsuperuser
 ```
 
-### 9. Collect static files (if needed)
+### 10. Collect static files (if needed)
 ```bash
 python manage.py collectstatic --noinput
 ```
 
-### 10. Start Celery Worker (in separate terminal)
+### 11. Start Celery Worker (in separate terminal)
 ```bash
 celery -A backend worker -l info
 ```
 
-### 11. Start Celery Beat (in separate terminal)
+### 12. Start Celery Beat (in separate terminal)
 ```bash
 celery -A backend beat -l info
 ```
 
-### 12. Chạy development server
+### 13. Chạy development server
 ```bash
 # ASGI server (for WebSocket support)
 daphne -b 0.0.0.0 -p 8000 backend.asgi:application
