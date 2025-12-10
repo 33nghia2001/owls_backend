@@ -9,7 +9,8 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from apps.users.views import UserViewSet
 from apps.courses.views import CourseViewSet, CategoryViewSet, LessonViewSet
 from apps.enrollments.views import EnrollmentViewSet, LessonProgressViewSet, QuizAttemptViewSet
-from apps.reviews.views import ReviewViewSet, InstructorReplyViewSet
+from apps.reviews.views import ReviewViewSet
+from apps.payments.views import PaymentViewSet, DiscountViewSet, VNPayReturnView, VNPayIPNView
 
 # Setup Router
 router = DefaultRouter()
@@ -21,12 +22,16 @@ router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
 router.register(r'lesson-progress', LessonProgressViewSet, basename='lesson-progress')
 router.register(r'quiz-attempts', QuizAttemptViewSet, basename='quiz-attempt')
 router.register(r'reviews', ReviewViewSet, basename='review')
-router.register(r'instructor-replies', InstructorReplyViewSet, basename='instructor-reply')
-# Bạn sẽ register thêm payments tại đây sau này
+router.register(r'payments', PaymentViewSet, basename='payment')
+router.register(r'discounts', DiscountViewSet, basename='discount')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include(router.urls)),
+    
+    # VNPay Callbacks
+    path('api/v1/payments/vnpay/return/', VNPayReturnView.as_view(), name='vnpay-return'),
+    path('api/v1/payments/vnpay/ipn/', VNPayIPNView.as_view(), name='vnpay-ipn'),
     
     # Authentication URLs (Login/Refresh)
     path('api/v1/auth/', include('rest_framework.urls')), # Basic auth login/logout

@@ -16,6 +16,15 @@ class Enrollment(models.Model):
     student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='enrollments')
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='enrollments')
     
+    # Payment reference (optional - có thể null nếu free course)
+    payment = models.ForeignKey(
+        'payments.Payment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='enrollment'
+    )
+    
     # Progress
     progress_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     completed_lessons_count = models.PositiveIntegerField(default=0)
