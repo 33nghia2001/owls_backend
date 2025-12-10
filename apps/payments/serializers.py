@@ -64,8 +64,9 @@ class PaymentSerializer(serializers.ModelSerializer):
                 })
             
             # --- XỬ LÝ PENDING PAYMENT CŨ ---
-            # Tìm các payment pending quá hạn (15 phút) -> Hủy & Trả lại discount slot
-            cutoff_time = timezone.now() - timedelta(minutes=15)
+            # Tìm các payment pending quá hạn (10 phút) -> Hủy & Trả lại discount slot
+            # REDUCED FROM 15min to prevent Ghost Payment DOS attack
+            cutoff_time = timezone.now() - timedelta(minutes=10)
             old_pending_payments = Payment.objects.filter(
                 user=user,
                 course=course,
@@ -83,7 +84,19 @@ class PaymentSerializer(serializers.ModelSerializer):
             # Đánh dấu hết hạn hàng loạt
             old_pending_payments.update(status='expired')
             
-            # Kiểm tra xem có payment nào mới tạo gần đây không (tránh spam liên tục)
+            # CHỐNG GHOST PAYMENT DOS: Giới hạn số lượng pending payments
+            # Không cho phép user có quá 2 đơn pending cùng lúc (bất kể course nào)
+            user_pending_count = Payment.objects.filter(
+                user=user,
+                status='pending'
+            ).count()
+            
+            if user_pending_count >= 2:
+                raise serializers.ValidationError({
+                    'non_field_errors': 'You have too many pending payments. Please complete or wait for them to expire first.'
+                })
+            
+            # Kiểm tra xem có payment nào mới tạo gần đây cho course này không (tránh spam liên tục)
             recent_pending = Payment.objects.filter(
                 user=user,
                 course=course,

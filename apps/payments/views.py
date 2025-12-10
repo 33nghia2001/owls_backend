@@ -18,7 +18,10 @@ from django.conf import settings
 
 
 class PaymentCreateThrottle(UserRateThrottle):
-    """Custom throttle cho việc tạo payment - 20 lần/giờ"""
+    """
+    Custom throttle cho việc tạo payment - 5 lần/giờ
+    REDUCED from 20/hour to prevent Ghost Payment DOS attack
+    """
     scope = 'payment'
 
 

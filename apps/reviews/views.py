@@ -60,7 +60,6 @@ class ReviewViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Tự động gán user khi tạo review"""
         serializer.save(user=self.request.user)
-        # Không cần gọi update_course_rating vì đã có Signal lo
 
     def perform_update(self, serializer):
         """Chỉ owner mới update được"""

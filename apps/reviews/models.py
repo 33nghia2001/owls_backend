@@ -63,18 +63,6 @@ class ReviewHelpful(models.Model):
     def __str__(self):
         vote_type = "helpful" if self.is_helpful else "not helpful"
         return f"{self.user.username} marked review as {vote_type}"
-    
-    def save(self, *args, **kwargs):
-        """Update helpful counts when vote is saved"""
-        super().save(*args, **kwargs)
-        
-        # Recalculate counts
-        helpful = ReviewHelpful.objects.filter(review=self.review, is_helpful=True).count()
-        not_helpful = ReviewHelpful.objects.filter(review=self.review, is_helpful=False).count()
-        
-        self.review.helpful_count = helpful
-        self.review.not_helpful_count = not_helpful
-        self.review.save(update_fields=['helpful_count', 'not_helpful_count'])
 
 
 class InstructorReply(models.Model):
@@ -155,3 +143,22 @@ def update_course_rating(sender, instance, **kwargs):
     course.average_rating = stats['avg_rating'] or 0.00
     course.total_reviews = stats['total_reviews'] or 0
     course.save(update_fields=['average_rating', 'total_reviews'])
+
+
+@receiver([post_save, post_delete], sender=ReviewHelpful)
+def update_review_helpful_counts(sender, instance, **kwargs):
+    """
+    Signal tự động cập nhật helpful_count và not_helpful_count khi có vote.
+    Fix lỗ hổng: Khi admin xóa vote, count vẫn được cập nhật chính xác.
+    """
+    from django.db.models import Count, Q
+    review = instance.review
+    
+    stats = ReviewHelpful.objects.filter(review=review).aggregate(
+        helpful=Count('id', filter=Q(is_helpful=True)),
+        not_helpful=Count('id', filter=Q(is_helpful=False))
+    )
+    
+    review.helpful_count = stats['helpful'] or 0
+    review.not_helpful_count = stats['not_helpful'] or 0
+    review.save(update_fields=['helpful_count', 'not_helpful_count'])

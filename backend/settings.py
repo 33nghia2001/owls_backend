@@ -175,7 +175,7 @@ REST_FRAMEWORK = {
         'anon': '100/day',           # User chưa đăng nhập: 100 requests/ngày
         'user': '1000/day',          # User đã đăng nhập: 1000 requests/ngày
         'review_create': '10/day',   # Tạo review: 10 lần/ngày
-        'payment': '20/hour',        # Payment: 20 lần/giờ
+        'payment': '5/hour',         # Payment: 5 lần/giờ (REDUCED to prevent Ghost Payment DOS)
         'register': '5/hour',        # Register: 5 lần/giờ (chống spam)
     }
 }
