@@ -4,7 +4,7 @@ Securely authenticate WebSocket connections using HttpOnly cookies instead of UR
 """
 import logging
 from urllib.parse import parse_qs
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, TYPE_CHECKING
 
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
@@ -13,6 +13,9 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import AbstractBaseUser
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -53,7 +56,7 @@ class JWTAuthMiddleware(BaseMiddleware):
         return await super().__call__(scope, receive, send)
 
     @database_sync_to_async
-    def get_user_from_cookie(self, scope) -> Union[User, AnonymousUser]:
+    def get_user_from_cookie(self, scope) -> Union['AbstractBaseUser', AnonymousUser]:
         """Authenticate user from HttpOnly cookie."""
         try:
             cookies = self._parse_cookies(scope)
@@ -75,7 +78,7 @@ class JWTAuthMiddleware(BaseMiddleware):
             return AnonymousUser()
 
     @database_sync_to_async
-    def get_user_from_ticket(self, scope) -> Union[User, AnonymousUser]:
+    def get_user_from_ticket(self, scope) -> Union['AbstractBaseUser', AnonymousUser]:
         """Authenticate using one-time ticket (Atomic Redis operation)."""
         try:
             ticket = self._get_ticket_from_scope(scope)
@@ -151,7 +154,7 @@ class JWTAuthMiddleware(BaseMiddleware):
         
         return None
 
-    def _get_user_by_id(self, user_id: int) -> Union[User, AnonymousUser]:
+    def _get_user_by_id(self, user_id: int) -> Union['AbstractBaseUser', AnonymousUser]:
         """Retrieve user from DB by ID."""
         try:
             return User.objects.get(id=user_id)
