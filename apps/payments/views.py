@@ -131,7 +131,7 @@ class VNPayReturnView(APIView):
         vnpay_params = request.GET.dict()
         
         if not vnpay_params:
-            return redirect('/payment-error?error=no_params')
+            return redirect(f'{settings.FRONTEND_URL}/payment-error?error=no_params')
         
         # Validate signature
         vnpay = VNPay()
@@ -140,15 +140,23 @@ class VNPayReturnView(APIView):
         is_valid = vnpay.validate_response(settings.VNPAY_HASH_SECRET)
         
         if not is_valid:
-            return redirect('/payment-error?error=invalid_signature')
+            return redirect(f'{settings.FRONTEND_URL}/payment-error?error=invalid_signature')
         
         # Get transaction
         vnp_TxnRef = vnpay_params.get('vnp_TxnRef')
         vnp_ResponseCode = vnpay_params.get('vnp_ResponseCode')
+        vnp_Amount = int(vnpay_params.get('vnp_Amount', 0)) / 100  # VNPay trả về amount * 100
         
         try:
             # Find payment by transaction_id
             payment = Payment.objects.get(transaction_id=vnp_TxnRef)
+            
+            # 1. CRITICAL: Validate số tiền
+            if float(payment.amount) != float(vnp_Amount):
+                payment.status = 'failed'
+                payment.save()
+                return redirect(f'{settings.FRONTEND_URL}/payment-error?error=amount_mismatch')
+            
             vnpay_transaction = payment.vnpay_transaction
             
             # Update VNPay transaction
@@ -180,15 +188,15 @@ class VNPayReturnView(APIView):
                         }
                     )
                 
-                return redirect(f'/payment-success?transaction_id={vnp_TxnRef}')
+                return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
             else:
                 payment.status = 'failed'
                 payment.save()
                 error_msg = get_vnpay_response_message(vnp_ResponseCode)
-                return redirect(f'/payment-failed?error={error_msg}')
+                return redirect(f'{settings.FRONTEND_URL}/payment-failed?error={error_msg}')
                 
         except Payment.DoesNotExist:
-            return redirect('/payment-error?error=payment_not_found')
+            return redirect(f'{settings.FRONTEND_URL}/payment-error?error=payment_not_found')
 
 
 class VNPayIPNView(APIView):
@@ -210,32 +218,42 @@ class VNPayIPNView(APIView):
         
         vnp_TxnRef = vnpay_params.get('vnp_TxnRef')
         vnp_ResponseCode = vnpay_params.get('vnp_ResponseCode')
+        vnp_Amount = int(vnpay_params.get('vnp_Amount', 0)) / 100  # VNPay trả về amount * 100
         
         try:
             payment = Payment.objects.get(transaction_id=vnp_TxnRef)
             
-            # Chỉ xử lý nếu payment đang pending
-            if payment.status == 'pending':
-                if vnp_ResponseCode == '00':
-                    with transaction.atomic():
-                        payment.status = 'completed'
-                        payment.paid_at = timezone.now()
-                        payment.gateway_transaction_id = vnpay_params.get('vnp_TransactionNo')
-                        payment.save()
-                        
-                        # Tạo Enrollment
-                        from apps.enrollments.models import Enrollment
-                        Enrollment.objects.get_or_create(
-                            student=payment.user,
-                            course=payment.course,
-                            defaults={
-                                'status': 'active',
-                                'payment': payment
-                            }
-                        )
-                else:
-                    payment.status = 'failed'
+            # 1. CRITICAL: Validate số tiền
+            if float(payment.amount) != float(vnp_Amount):
+                return Response({'RspCode': '04', 'Message': 'Invalid Amount'})
+            
+            # 2. Idempotency: Chỉ xử lý nếu payment đang pending
+            if payment.status != 'pending':
+                # Nếu đã completed hoặc failed rồi thì trả về success luôn
+                return Response({'RspCode': '02', 'Message': 'Order already confirmed'})
+            
+            # 3. Xử lý payment
+            # 3. Xử lý payment
+            if vnp_ResponseCode == '00':
+                with transaction.atomic():
+                    payment.status = 'completed'
+                    payment.paid_at = timezone.now()
+                    payment.gateway_transaction_id = vnpay_params.get('vnp_TransactionNo')
                     payment.save()
+                    
+                    # Tạo Enrollment
+                    from apps.enrollments.models import Enrollment
+                    Enrollment.objects.get_or_create(
+                        student=payment.user,
+                        course=payment.course,
+                        defaults={
+                            'status': 'active',
+                            'payment': payment
+                        }
+                    )
+            else:
+                payment.status = 'failed'
+                payment.save()
             
             return Response({'RspCode': '00', 'Message': 'Confirm Success'})
             

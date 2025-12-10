@@ -194,6 +194,9 @@ CORS_ALLOW_HEADERS = [
     'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with',
 ]
 
+# Frontend URL for redirects
+FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
+
 
 # 11. API Documentation
 # ------------------------------------------------------------------------------

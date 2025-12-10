@@ -9,7 +9,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from apps.users.views import UserViewSet
 from apps.courses.views import CourseViewSet, CategoryViewSet, LessonViewSet
 from apps.enrollments.views import EnrollmentViewSet, LessonProgressViewSet, QuizAttemptViewSet
-from apps.reviews.views import ReviewViewSet
+from apps.reviews.views import ReviewViewSet, InstructorReplyViewSet
 from apps.payments.views import PaymentViewSet, DiscountViewSet, VNPayReturnView, VNPayIPNView
 
 # Setup Router
@@ -22,6 +22,7 @@ router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
 router.register(r'lesson-progress', LessonProgressViewSet, basename='lesson-progress')
 router.register(r'quiz-attempts', QuizAttemptViewSet, basename='quiz-attempt')
 router.register(r'reviews', ReviewViewSet, basename='review')
+router.register(r'instructor-replies', InstructorReplyViewSet, basename='instructor-reply')
 router.register(r'payments', PaymentViewSet, basename='payment')
 router.register(r'discounts', DiscountViewSet, basename='discount')
 
