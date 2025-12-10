@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import UserRateThrottle
 from django.shortcuts import redirect
 from django.utils import timezone
 from django.db import transaction
@@ -16,14 +17,25 @@ from .vnpay import create_vnpay_payment_url, VNPay, get_vnpay_response_message
 from django.conf import settings
 
 
+class PaymentCreateThrottle(UserRateThrottle):
+    """Custom throttle cho việc tạo payment - 20 lần/giờ"""
+    scope = 'payment'
+
+
 class PaymentViewSet(viewsets.ModelViewSet):
     """
     ViewSet cho Payments.
     - List/Retrieve: Chỉ xem payment của chính mình (hoặc admin xem tất cả)
-    - Create: Tạo payment mới và nhận VNPay URL
+    - Create: Tạo payment mới và nhận VNPay URL (throttled: 20/hour)
     """
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def get_throttles(self):
+        """Áp dụng throttle riêng cho create action"""
+        if self.action == 'create':
+            return [PaymentCreateThrottle()]
+        return super().get_throttles()
     
     def get_queryset(self):
         """User chỉ xem payment của mình, admin xem tất cả"""
@@ -150,6 +162,14 @@ class VNPayReturnView(APIView):
         try:
             # Find payment by transaction_id
             payment = Payment.objects.get(transaction_id=vnp_TxnRef)
+            
+            # Tối ưu: Nếu đơn hàng đã hoàn thành (IPN xử lý trước), redirect luôn
+            if payment.status == 'completed':
+                return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
+            
+            if payment.status == 'failed':
+                error_msg = 'Payment already failed'
+                return redirect(f'{settings.FRONTEND_URL}/payment-failed?error={error_msg}')
             
             # 1. CRITICAL: Validate số tiền
             if float(payment.amount) != float(vnp_Amount):
