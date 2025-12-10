@@ -24,11 +24,20 @@ class CourseViewSet(viewsets.ModelViewSet):
         return CourseListSerializer
 
     def get_queryset(self):
-        # Instructor thấy hết course của họ, User thường chỉ thấy course đã publish
         user = self.request.user
+        
+        # Base query
+        queryset = Course.objects.all()
+
+        # Tối ưu hóa query: Load trước sections và lessons để tránh lỗi N+1
+        if self.action == 'retrieve':
+            queryset = queryset.prefetch_related('sections', 'sections__lessons')
+
+        # Logic lọc theo role (áp dụng lên queryset đã tối ưu)
         if user.is_authenticated and user.role == 'instructor' and self.action in ['update', 'partial_update', 'destroy']:
-             return Course.objects.filter(instructor=user)
-        return Course.objects.filter(status='published')
+             return queryset.filter(instructor=user)
+        
+        return queryset.filter(status='published')
 
     def perform_create(self, serializer):
         serializer.save(instructor=self.request.user)

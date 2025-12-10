@@ -15,9 +15,12 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'role']
+        # Xóa 'role' khỏi fields để user không tự gửi lên được
+        fields = ['username', 'email', 'password', 'first_name', 'last_name']
     
     def create(self, validated_data):
+        # Mặc định luôn set role là 'student' khi đăng ký qua API này
+        validated_data['role'] = 'student'
         user = User.objects.create_user(**validated_data)
         return user
 
