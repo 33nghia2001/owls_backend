@@ -144,6 +144,11 @@ class ReviewViewSet(viewsets.ModelViewSet):
             }
         )
         
+        # BUG FIX: Activate dead code - Send notification to student when instructor replies
+        if created:
+            from apps.payments.tasks import send_review_reply_notification
+            send_review_reply_notification.delay(reply.id)
+        
         serializer = InstructorReplySerializer(reply)
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 

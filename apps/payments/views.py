@@ -307,6 +307,11 @@ class VNPayReturnView(APIView):
                 if payment.status == 'failed':
                     return redirect(f'{settings.FRONTEND_URL}/payment-failed?error=already_failed')
                 
+                # SECURITY FIX: Prevent discount bypass via race condition
+                # If payment was cancelled (and discount slot refunded), reject processing
+                if payment.status == 'cancelled':
+                    return redirect(f'{settings.FRONTEND_URL}/payment-failed?error=payment_cancelled')
+                
                 # Check Amount (Integer comparison)
                 if int(payment.amount * 100) != int(vnpay_params.get('vnp_Amount', '0')):
                     payment.status = 'failed'

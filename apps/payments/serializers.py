@@ -144,9 +144,13 @@ class PaymentSerializer(serializers.ModelSerializer):
                 expected_amount = max(0, course.price - discount_val)
             
             # --- VALIDATE FINAL AMOUNT ---
-            # So sánh số tiền client gửi lên với số tiền server tính toán
-            # Chuyển về float để so sánh chính xác
-            if float(data.get('amount')) != float(expected_amount):
+            # SECURITY FIX: Use Decimal for precise currency comparison
+            # Never use float for financial calculations due to floating-point precision errors
+            from decimal import Decimal
+            client_amount = Decimal(str(data.get('amount')))
+            expected_amount_decimal = Decimal(str(expected_amount))
+            
+            if client_amount != expected_amount_decimal:
                 raise serializers.ValidationError({
                     'amount': f'Amount mismatch. Expected: {expected_amount} VND'
                 })
