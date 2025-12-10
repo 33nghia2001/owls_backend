@@ -9,6 +9,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from apps.users.views import UserViewSet
 from apps.courses.views import CourseViewSet, CategoryViewSet, LessonViewSet
 from apps.enrollments.views import EnrollmentViewSet, LessonProgressViewSet, QuizAttemptViewSet
+from apps.reviews.views import ReviewViewSet, InstructorReplyViewSet
 
 # Setup Router
 router = DefaultRouter()
@@ -19,7 +20,9 @@ router.register(r'lessons', LessonViewSet, basename='lesson')
 router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
 router.register(r'lesson-progress', LessonProgressViewSet, basename='lesson-progress')
 router.register(r'quiz-attempts', QuizAttemptViewSet, basename='quiz-attempt')
-# Bạn sẽ register thêm reviews, payments tại đây sau này
+router.register(r'reviews', ReviewViewSet, basename='review')
+router.register(r'instructor-replies', InstructorReplyViewSet, basename='instructor-reply')
+# Bạn sẽ register thêm payments tại đây sau này
 
 urlpatterns = [
     path('admin/', admin.site.urls),
