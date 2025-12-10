@@ -243,22 +243,59 @@ class PaymentViewSet(viewsets.ModelViewSet):
             if not updated:
                 raise ValidationError({'discount': 'This discount code has reached its usage limit.'})
         
-        # 3. Calculate Prices (DRY: Reusing helper function)
-        original_price, discount_amount, _ = calculate_payment_amounts(course, discount)
+        # 3. Calculate Prices (SERVER AUTHORITY: Server always decides final price)
+        original_price, discount_amount, final_price = calculate_payment_amounts(course, discount)
         
-        # 4. Save payment
+        # 4. Get client metadata
         client_ip, _ = get_client_ip(self.request)
+        # DEPLOYMENT WARNING: Ensure IPWARE_TRUSTED_PROXY_LIST is configured in production
+        # when behind Cloudflare, Nginx, or AWS ALB to get accurate client IP
         
+        # 5. Save payment with SERVER-CALCULATED amounts (ignore client-provided amount)
         payment = serializer.save(
             user=user,
             status='pending',
+            amount=final_price,  # CRITICAL: Override client amount with server calculation
             original_price=original_price,
             discount_amount=discount_amount,
             ip_address=client_ip or '0.0.0.0',
             user_agent=self.request.META.get('HTTP_USER_AGENT', '')
         )
         
-        # 5. Generate VNPay URL
+        # 6. SPECIAL CASE: Handle Free Courses / 100% Discount
+        if final_price == 0:
+            # Auto-complete payment for free courses
+            payment.status = 'completed'
+            payment.payment_method = 'free'  # Force method to 'free'
+            payment.paid_at = timezone.now()
+            payment.save()
+            
+            # Create DiscountUsage if discount was applied
+            if discount:
+                DiscountUsage.objects.create(
+                    user=user,
+                    discount=discount,
+                    payment=payment,
+                    amount_saved=discount_amount
+                )
+            
+            # Create Enrollment immediately (no payment gateway needed)
+            enrollment, created = Enrollment.objects.get_or_create(
+                student=user,
+                course=course,
+                defaults={'status': 'active', 'payment': payment}
+            )
+            
+            # Send confirmation email asynchronously
+            transaction.on_commit(
+                lambda: send_enrollment_confirmation_email.delay(enrollment.id)
+            )
+            
+            logger.info(f"Free enrollment created for user {user.id} in course {course.id}")
+            # No VNPay URL needed for free courses
+            return
+        
+        # 7. Generate VNPay URL (Only for paid courses)
         if payment.payment_method == 'vnpay':
             payment_url = create_vnpay_payment_url(payment, self.request)
             payment.gateway_response = {'payment_url': payment_url}

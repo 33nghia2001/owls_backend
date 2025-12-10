@@ -57,6 +57,12 @@ class PaymentSerializer(serializers.ModelSerializer):
         if request and course:
             user = request.user
             
+            # SECURITY: Check if user account is active
+            if not user.is_active:
+                raise serializers.ValidationError({
+                    'non_field_errors': 'Your account has been disabled. Please contact support.'
+                })
+            
             # --- KIỂM TRA ENROLLMENT ---
             if Enrollment.objects.filter(student=user, course=course).exists():
                 raise serializers.ValidationError({
@@ -143,17 +149,22 @@ class PaymentSerializer(serializers.ModelSerializer):
                 
                 expected_amount = max(0, course.price - discount_val)
             
-            # --- VALIDATE FINAL AMOUNT ---
-            # SECURITY FIX: Use Decimal for precise currency comparison
-            # Never use float for financial calculations due to floating-point precision errors
+            # --- AMOUNT VALIDATION (INFORMATIONAL ONLY) ---
+            # NOTE: Server has final authority on amount calculation.
+            # Client-provided amount is validated here for user feedback,
+            # but server will override it with calculated amount in perform_create().
+            # This prevents price manipulation attacks.
             from decimal import Decimal
-            client_amount = Decimal(str(data.get('amount')))
-            expected_amount_decimal = Decimal(str(expected_amount))
             
-            if client_amount != expected_amount_decimal:
-                raise serializers.ValidationError({
-                    'amount': f'Amount mismatch. Expected: {expected_amount} VND'
-                })
+            if 'amount' in data:
+                client_amount = Decimal(str(data.get('amount')))
+                expected_amount_decimal = Decimal(str(expected_amount))
+                
+                # Warn user if amount doesn't match (but don't block - server will override)
+                if client_amount != expected_amount_decimal:
+                    raise serializers.ValidationError({
+                        'amount': f'Amount mismatch. Expected: {expected_amount} VND'
+                    })
         
         return data
 
