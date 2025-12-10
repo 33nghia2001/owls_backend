@@ -47,62 +47,52 @@ class ReviewViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Tự động gán user khi tạo review"""
-        review = serializer.save(user=self.request.user)
-        
-        # Tự động cập nhật average rating của course
-        self._update_course_rating(review.course)
+        serializer.save(user=self.request.user)
+        # Không cần gọi update_course_rating vì đã có Signal lo
 
     def perform_update(self, serializer):
         """Chỉ owner mới update được"""
         if serializer.instance.user != self.request.user:
             raise permissions.PermissionDenied("You can only edit your own review")
-        
-        review = serializer.save()
-        self._update_course_rating(review.course)
+        serializer.save()
 
     def perform_destroy(self, instance):
         """Chỉ owner hoặc admin mới xóa được"""
         if instance.user != self.request.user and self.request.user.role != 'admin':
             raise permissions.PermissionDenied("You can only delete your own review")
-        
-        course = instance.course
         instance.delete()
-        self._update_course_rating(course)
-
-    def _update_course_rating(self, course):
-        """Cập nhật average rating và total reviews của course"""
-        stats = Review.objects.filter(
-            course=course, 
-            is_approved=True
-        ).aggregate(
-            avg_rating=Avg('rating'),
-            total_reviews=models.Count('id')
-        )
-        
-        course.average_rating = stats['avg_rating'] or 0.00
-        course.total_reviews = stats['total_reviews'] or 0
-        course.save(update_fields=['average_rating', 'total_reviews'])
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def helpful(self, request, pk=None):
-        """Đánh dấu review hữu ích hoặc không hữu ích"""
+        """Toggle helpful vote: Bấm lần đầu là Vote, bấm lần nữa (cùng loại) là Hủy vote"""
         review = self.get_object()
         is_helpful = request.data.get('is_helpful', True)
         
-        # Tạo hoặc cập nhật
-        helpful, created = ReviewHelpful.objects.update_or_create(
-            review=review,
-            user=request.user,
-            defaults={'is_helpful': is_helpful}
-        )
+        existing_vote = ReviewHelpful.objects.filter(review=review, user=request.user).first()
         
-        # Cập nhật count
+        if existing_vote:
+            if existing_vote.is_helpful == is_helpful:
+                # Nếu vote giống hệt cái cũ -> Xóa (Unvote)
+                existing_vote.delete()
+                action = 'removed'
+            else:
+                # Nếu vote khác -> Đổi chiều vote
+                existing_vote.is_helpful = is_helpful
+                existing_vote.save()
+                action = 'updated'
+        else:
+            # Chưa có vote -> Tạo mới
+            ReviewHelpful.objects.create(review=review, user=request.user, is_helpful=is_helpful)
+            action = 'created'
+        
+        # Cập nhật count vào Model Review
         review.helpful_count = ReviewHelpful.objects.filter(review=review, is_helpful=True).count()
         review.not_helpful_count = ReviewHelpful.objects.filter(review=review, is_helpful=False).count()
         review.save(update_fields=['helpful_count', 'not_helpful_count'])
         
         return Response({
             'status': 'success',
+            'action': action,
             'helpful_count': review.helpful_count,
             'not_helpful_count': review.not_helpful_count
         })

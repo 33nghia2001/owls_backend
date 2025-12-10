@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
 from apps.courses.models import Course
 
 
@@ -42,27 +44,6 @@ class Review(models.Model):
     
     def __str__(self):
         return f"{self.user.username} - {self.course.title} - {self.rating} stars"
-    
-    def save(self, *args, **kwargs):
-        """Update course average rating when review is saved"""
-        super().save(*args, **kwargs)
-        self.update_course_rating()
-    
-    def update_course_rating(self):
-        """Recalculate course average rating"""
-        from django.db.models import Avg, Count
-        
-        stats = Review.objects.filter(
-            course=self.course,
-            is_approved=True
-        ).aggregate(
-            avg_rating=Avg('rating'),
-            total_reviews=Count('id')
-        )
-        
-        self.course.average_rating = stats['avg_rating'] or 0
-        self.course.total_reviews = stats['total_reviews'] or 0
-        self.course.save(update_fields=['average_rating', 'total_reviews'])
 
 
 class ReviewHelpful(models.Model):
@@ -151,3 +132,26 @@ class ReportReview(models.Model):
     
     def __str__(self):
         return f"Report on review #{self.review.id} by {self.reported_by.username}"
+
+
+# --- DJANGO SIGNALS (Tự động cập nhật rating) ---
+@receiver([post_save, post_delete], sender=Review)
+def update_course_rating(sender, instance, **kwargs):
+    """
+    Signal tự động tính lại rating khi có Review được Thêm/Sửa/Xóa.
+    Hoạt động cả trên API và Django Admin.
+    """
+    from django.db.models import Avg, Count
+    course = instance.course
+    
+    stats = Review.objects.filter(
+        course=course,
+        is_approved=True
+    ).aggregate(
+        avg_rating=Avg('rating'),
+        total_reviews=Count('id')
+    )
+    
+    course.average_rating = stats['avg_rating'] or 0.00
+    course.total_reviews = stats['total_reviews'] or 0
+    course.save(update_fields=['average_rating', 'total_reviews'])
