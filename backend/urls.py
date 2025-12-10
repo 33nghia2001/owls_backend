@@ -7,7 +7,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 # Import ViewSets
 from apps.users.views import UserViewSet
-from apps.courses.views import CourseViewSet, CategoryViewSet
+from apps.courses.views import CourseViewSet, CategoryViewSet, LessonViewSet
 from apps.enrollments.views import EnrollmentViewSet, LessonProgressViewSet, QuizAttemptViewSet
 
 # Setup Router
@@ -15,6 +15,7 @@ router = DefaultRouter()
 router.register(r'users', UserViewSet)
 router.register(r'courses', CourseViewSet)
 router.register(r'categories', CategoryViewSet)
+router.register(r'lessons', LessonViewSet, basename='lesson')
 router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
 router.register(r'lesson-progress', LessonProgressViewSet, basename='lesson-progress')
 router.register(r'quiz-attempts', QuizAttemptViewSet, basename='quiz-attempt')

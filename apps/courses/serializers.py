@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Course, Section, Lesson, Category
+from .models import Course, Section, Lesson, Category, Resource
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -10,6 +10,26 @@ class LessonSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lesson
         fields = ['id', 'title', 'lesson_type', 'video_duration', 'is_preview', 'order']
+
+
+class ResourceSerializer(serializers.ModelSerializer):
+    """Serializer cho tài liệu đính kèm"""
+    class Meta:
+        model = Resource
+        fields = ['id', 'title', 'file_url', 'file_size']
+
+
+class LessonContentSerializer(serializers.ModelSerializer):
+    """
+    Serializer đầy đủ nội dung bài học, chỉ dùng cho người đã đăng ký.
+    Trả về video_url, content và resources.
+    """
+    resources = ResourceSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = Lesson
+        fields = ['id', 'title', 'content', 'video_url', 'video_duration', 
+                  'lesson_type', 'is_preview', 'order', 'resources']
 
 class SectionSerializer(serializers.ModelSerializer):
     lessons = LessonSerializer(many=True, read_only=True)

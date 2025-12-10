@@ -1,8 +1,13 @@
 from rest_framework import viewsets, filters, permissions
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Course, Category, Lesson
-from .serializers import CourseListSerializer, CourseDetailSerializer, CategorySerializer
-from apps.core.permissions import IsInstructorOrReadOnly
+from .serializers import (
+    CourseListSerializer, 
+    CourseDetailSerializer, 
+    CategorySerializer,
+    LessonContentSerializer
+)
+from apps.core.permissions import IsInstructorOrReadOnly, IsEnrolledOrInstructor
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Category.objects.filter(is_active=True)
@@ -41,3 +46,22 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(instructor=self.request.user)
+
+
+class LessonViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet để phục vụ việc học - xem nội dung bài học.
+    Chỉ cho phép xem nếu:
+    - Là instructor/admin
+    - Bài học là preview
+    - Đã đăng ký khóa học (enrollment active)
+    """
+    queryset = Lesson.objects.all()
+    serializer_class = LessonContentSerializer
+    permission_classes = [permissions.IsAuthenticated, IsEnrolledOrInstructor]
+
+    def get_queryset(self):
+        # Chỉ trả về các bài học thuộc khóa học published (trừ khi là instructor)
+        if self.request.user.is_authenticated and self.request.user.role == 'instructor':
+             return Lesson.objects.all()
+        return Lesson.objects.filter(section__course__status='published')
