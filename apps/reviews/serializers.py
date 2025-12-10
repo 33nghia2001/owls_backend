@@ -1,25 +1,27 @@
 from rest_framework import serializers
 from .models import Review, ReviewHelpful, InstructorReply, ReportReview
 from apps.courses.serializers import CourseListSerializer
+from apps.users.serializers import PublicUserSerializer
 
 
 class InstructorReplySerializer(serializers.ModelSerializer):
-    instructor_name = serializers.CharField(source='instructor.full_name', read_only=True)
+    instructor = PublicUserSerializer(read_only=True)  # Ẩn email/phone của instructor
     
     class Meta:
         model = InstructorReply
-        fields = ['id', 'review', 'instructor', 'instructor_name', 'reply_text', 'created_at', 'updated_at']
+        fields = ['id', 'review', 'instructor', 'reply_text', 'created_at', 'updated_at']
         read_only_fields = ['instructor', 'created_at', 'updated_at']
 
 
 class ReviewSerializer(serializers.ModelSerializer):
-    user_name = serializers.CharField(source='user.full_name', read_only=True)
+    user = PublicUserSerializer(read_only=True)  # Ẩn email/phone của reviewer
     user_avatar = serializers.SerializerMethodField()
     instructor_reply = InstructorReplySerializer(read_only=True)
+    comment = serializers.CharField(max_length=5000)  # Giới hạn 5000 ký tự
     
     class Meta:
         model = Review
-        fields = ['id', 'course', 'user', 'user_name', 'user_avatar', 'rating', 'title', 
+        fields = ['id', 'course', 'user', 'user_avatar', 'rating', 'title', 
                   'comment', 'helpful_count', 'not_helpful_count', 'is_approved', 
                   'instructor_reply', 'created_at', 'updated_at']
         read_only_fields = ['user', 'helpful_count', 'not_helpful_count', 'is_approved', 

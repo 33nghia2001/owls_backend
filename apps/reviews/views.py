@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from django.db.models import Q, Avg, Count
 from django.db import models
 from .models import Review, ReviewHelpful, InstructorReply, ReportReview
@@ -13,15 +14,26 @@ from .serializers import (
 from apps.courses.models import Course
 
 
+class ReviewCreateThrottle(UserRateThrottle):
+    """Custom throttle cho việc tạo review - 10 lần/ngày"""
+    scope = 'review_create'
+
+
 class ReviewViewSet(viewsets.ModelViewSet):
     """
     ViewSet cho Reviews.
     - List/Retrieve: Public (approved reviews)
-    - Create: Chỉ enrolled students
+    - Create: Chỉ enrolled students (throttled: 10/day)
     - Update/Delete: Chỉ owner
     """
     serializer_class = ReviewSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    
+    def get_throttles(self):
+        """Áp dụng throttle riêng cho create action"""
+        if self.action == 'create':
+            return [ReviewCreateThrottle()]
+        return super().get_throttles()
 
     def get_queryset(self):
         """

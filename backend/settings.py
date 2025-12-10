@@ -162,6 +162,18 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    
+    # Throttling - Giới hạn request để chống spam
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/day',           # User chưa đăng nhập: 100 requests/ngày
+        'user': '1000/day',          # User đã đăng nhập: 1000 requests/ngày
+        'review_create': '10/day',   # Tạo review: 10 lần/ngày
+        'payment': '20/hour',        # Payment: 20 lần/giờ
+    }
 }
 
 SIMPLE_JWT = {

@@ -4,7 +4,15 @@ from .models import InstructorProfile
 
 User = get_user_model()
 
+class PublicUserSerializer(serializers.ModelSerializer):
+    """Serializer cho thông tin user công khai - ẨN email, phone, date_of_birth"""
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'avatar', 'bio', 'role']
+        # KHÔNG BAO GỒM: email, phone, date_of_birth
+
 class UserSerializer(serializers.ModelSerializer):
+    """Serializer đầy đủ - CHỈ dùng cho chính user hoặc admin"""
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'avatar', 'bio']
@@ -25,7 +33,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 class InstructorProfileSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
+    user = PublicUserSerializer(read_only=True)  # Dùng PublicUserSerializer thay vì UserSerializer
     class Meta:
         model = InstructorProfile
         fields = '__all__'
