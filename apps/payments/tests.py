@@ -21,6 +21,8 @@ class TestPaymentCreation:
         }
         response = authenticated_client.post(url, data, format='json')
         
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"\nError response: {response.data}")
         assert response.status_code == status.HTTP_201_CREATED
         assert Payment.objects.filter(user=student_user, course=course).exists()
         
@@ -62,6 +64,7 @@ class TestPaymentCreation:
         # Create second course for second payment (to bypass same-course check)
         course2 = Course.objects.create(
             title='Course 2',
+            slug='course-2-test',
             description='Second course',
             instructor=instructor_user,
             price=Decimal('200000')
@@ -78,6 +81,7 @@ class TestPaymentCreation:
         # Create third course for third payment attempt
         course3 = Course.objects.create(
             title='Course 3',
+            slug='course-3-test',
             description='Third course',
             instructor=instructor_user,
             price=Decimal('300000')
@@ -138,7 +142,7 @@ class TestDiscountCode:
             discount_type='percentage',
             discount_value=Decimal('20'),
             valid_from=timezone.now() - timezone.timedelta(days=30),
-            valid_to=timezone.now() - timezone.timedelta(days=1),
+            valid_until=timezone.now() - timezone.timedelta(days=1),
             is_active=True
         )
         
@@ -157,6 +161,8 @@ class TestDiscountCode:
             code='INACTIVE20',
             discount_type='percentage',
             discount_value=Decimal('20'),
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timezone.timedelta(days=30),
             is_active=False
         )
         
@@ -177,6 +183,8 @@ class TestDiscountCode:
             discount_value=Decimal('20'),
             max_uses=1,
             current_uses=1,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timezone.timedelta(days=30),
             is_active=True
         )
         
@@ -204,7 +212,7 @@ class TestVNPayPaymentFlow:
             status='pending'
         )
         
-        url = reverse('payment-vnpay-url', kwargs={'pk': payment.id})
+        url = reverse('payment-generate-vnpay-url', kwargs={'pk': payment.id})
         response = authenticated_client.get(url)
         
         assert response.status_code == status.HTTP_200_OK
@@ -230,7 +238,7 @@ class TestVNPayPaymentFlow:
         )
         
         # Mock VNPay IPN callback
-        url = reverse('payment-vnpay-ipn')
+        url = reverse('vnpay-ipn')
         vnp_params = {
             'vnp_TxnRef': vnpay_txn.vnp_TxnRef,
             'vnp_Amount': str(vnpay_txn.vnp_Amount),
@@ -265,7 +273,7 @@ class TestVNPayPaymentFlow:
             vnp_Amount=int((payment.amount * 100).to_integral_value())
         )
         
-        url = reverse('payment-vnpay-ipn')
+        url = reverse('vnpay-ipn')
         vnp_params = {
             'vnp_TxnRef': vnpay_txn.vnp_TxnRef,
             'vnp_Amount': str(vnpay_txn.vnp_Amount),
@@ -297,7 +305,7 @@ class TestVNPayPaymentFlow:
             vnp_Amount=int((payment.amount * 100).to_integral_value())
         )
         
-        url = reverse('payment-vnpay-ipn')
+        url = reverse('vnpay-ipn')
         vnp_params = {
             'vnp_TxnRef': vnpay_txn.vnp_TxnRef,
             'vnp_Amount': str(vnpay_txn.vnp_Amount),
@@ -403,7 +411,7 @@ class TestPaymentSecurity:
         )
         
         # Attacker tries to tamper with amount
-        url = reverse('payment-vnpay-ipn')
+        url = reverse('vnpay-ipn')
         vnp_params = {
             'vnp_TxnRef': vnpay_txn.vnp_TxnRef,
             'vnp_Amount': '100',  # Tampered amount

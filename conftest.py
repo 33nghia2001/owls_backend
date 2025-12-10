@@ -1,12 +1,28 @@
+import os
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework.test import APIClient
 from apps.courses.models import Course, Category
 from apps.enrollments.models import Enrollment
 from apps.payments.models import Payment, Discount
 from decimal import Decimal
 
+# Force DEBUG mode for tests (bypass security middleware)
+os.environ.setdefault('DJANGO_DEBUG', '1')
+os.environ.setdefault('IPWARE_TRUSTED_PROXY_LIST', '127.0.0.1')
+
 User = get_user_model()
+
+
+@pytest.fixture(autouse=True)
+def enable_db_access_for_all_tests(db, settings):
+    """
+    Auto-enable DEBUG mode for all tests to bypass security middleware.
+    Without this, IPWARE middleware will reject all test requests.
+    """
+    settings.DEBUG = True
+    settings.IPWARE_TRUSTED_PROXY_LIST = ['127.0.0.1']
 
 
 @pytest.fixture
@@ -113,12 +129,15 @@ def payment(db, student_user, course):
 @pytest.fixture
 def discount(db):
     """Create an active discount code."""
+    from django.utils import timezone
     return Discount.objects.create(
         code='TEST50',
         discount_type='percentage',
         discount_value=Decimal('50.00'),
         max_uses=10,
-        is_active=True
+        is_active=True,
+        valid_from=timezone.now(),
+        valid_until=timezone.now() + timezone.timedelta(days=30)
     )
 
 

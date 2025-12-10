@@ -1,9 +1,15 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.conf import settings
 from datetime import timedelta
 from django.db.models import F
-from turnstile.fields import TurnstileField # Yêu cầu cài đặt thư viện django-turnstile
+
+try:
+    from turnstile.fields import TurnstileField # Yêu cầu cài đặt thư viện django-turnstile
+    TURNSTILE_AVAILABLE = True
+except ImportError:
+    TURNSTILE_AVAILABLE = False
 
 from .models import Payment, VNPayTransaction, Discount
 from apps.courses.models import Course
@@ -19,21 +25,29 @@ class PaymentSerializer(serializers.ModelSerializer):
     discount_code = serializers.CharField(source='discount.code', read_only=True)
     payment_url = serializers.SerializerMethodField()
     
-    # Chống bot spam tạo đơn hàng ảo
-    turnstile = TurnstileField(write_only=True) 
+    # Chống bot spam tạo đơn hàng ảo (chỉ sử dụng trong production)
+    if TURNSTILE_AVAILABLE and not settings.DEBUG:
+        turnstile = TurnstileField(write_only=True) 
     
     class Meta:
         model = Payment
-        fields = [
+        # Dynamically build fields list (exclude turnstile in DEBUG/test mode)
+        base_fields = [
             'id', 'transaction_id', 'user', 'user_name', 'course', 'course_title',
             'amount', 'currency', 'payment_method', 'status', 'discount', 'discount_code',
-            'gateway_transaction_id', 'description', 'payment_url', 'turnstile',
+            'gateway_transaction_id', 'description', 'payment_url',
             'created_at', 'paid_at'
         ]
+        fields = base_fields + (['turnstile'] if (TURNSTILE_AVAILABLE and not settings.DEBUG) else [])
         read_only_fields = [
             'transaction_id', 'user', 'status', 'gateway_transaction_id',
             'created_at', 'paid_at'
         ]
+        extra_kwargs = {
+            'amount': {'required': False},  # Set by server based on course price + discount
+            'payment_method': {'required': False},  # Set by server or defaults to 'vnpay'
+            'currency': {'required': False},  # Defaults to 'VND'
+        }
     
     def get_payment_url(self, obj):
         """Trả về payment URL nếu có"""
