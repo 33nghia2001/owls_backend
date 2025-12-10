@@ -37,7 +37,10 @@ urlpatterns = [
     
     # Authentication URLs (Login/Refresh)
     path('api/v1/auth/', include('rest_framework.urls')), # Basic auth login/logout
-    path('api/v1/token/', include('apps.users.urls')), # Cần tạo file urls trong users cho JWT nếu chưa có
+    path('api/v1/token/', include('apps.users.urls')), # JWT authentication
+    
+    # Notifications & WebSocket
+    path('api/v1/notifications/', include('apps.notifications.urls')),
     
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

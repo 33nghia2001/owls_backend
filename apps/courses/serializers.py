@@ -74,7 +74,15 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Course
-        fields = '__all__'
+        # SECURITY FIX: Explicit fields to prevent accidental exposure of internal fields
+        # Never use '__all__' in production - future fields may contain sensitive data
+        fields = [
+            'id', 'title', 'slug', 'description', 'thumbnail', 'price', 
+            'discount_price', 'level', 'language', 'category', 'instructor',
+            'average_rating', 'total_students', 'total_reviews', 'duration',
+            'what_you_will_learn', 'requirements', 'target_audience',
+            'is_published', 'created_at', 'updated_at', 'sections'
+        ]
         
     def get_instructor(self, obj):
         return {

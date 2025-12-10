@@ -13,7 +13,8 @@ class Enrollment(models.Model):
         ('cancelled', 'Cancelled'),
     )
     
-    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='enrollments')
+    # SECURITY FIX: Use SET_NULL to preserve enrollment history for audit trails
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='enrollments')
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='enrollments')
     
     # Payment reference (optional - có thể null nếu free course)

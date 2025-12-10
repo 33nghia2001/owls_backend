@@ -28,7 +28,9 @@ class Payment(models.Model):
     transaction_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     
     # Relationships
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payments')
+    # SECURITY FIX: Use SET_NULL to preserve financial records even if user is deleted
+    # Critical for audit trails, tax compliance, and revenue reconciliation
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='payments')
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='payments')
     discount = models.ForeignKey(
         'Discount',
