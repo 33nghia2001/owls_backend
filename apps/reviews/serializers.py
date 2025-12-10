@@ -2,6 +2,14 @@ from rest_framework import serializers
 from .models import Review, ReviewHelpful, InstructorReply, ReportReview
 from apps.courses.serializers import CourseListSerializer
 from apps.users.serializers import PublicUserSerializer
+import bleach
+
+
+def sanitize_html(text):
+    """Remove all HTML tags except safe ones"""
+    allowed_tags = []  # No HTML tags allowed
+    allowed_attrs = {}
+    return bleach.clean(text, tags=allowed_tags, attributes=allowed_attrs, strip=True)
 
 
 class InstructorReplySerializer(serializers.ModelSerializer):
@@ -31,6 +39,26 @@ class ReviewSerializer(serializers.ModelSerializer):
         if obj.user.avatar:
             return obj.user.avatar.url
         return None
+    
+    def validate_comment(self, value):
+        """Sanitize comment to prevent XSS attacks"""
+        return sanitize_html(value)
+    
+    def validate_title(self, value):
+        """Sanitize title to prevent XSS attacks"""
+        if value:
+            return sanitize_html(value)
+        return value
+    
+    def validate_rating(self, value):
+        """Sanitize comment to prevent XSS attacks"""
+        return sanitize_html(value)
+    
+    def validate_title(self, value):
+        """Sanitize title to prevent XSS attacks"""
+        if value:
+            return sanitize_html(value)
+        return value
     
     def validate_rating(self, value):
         """Validate rating is between 1 and 5"""

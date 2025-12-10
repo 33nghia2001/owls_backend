@@ -30,6 +30,14 @@ class Payment(models.Model):
     # Relationships
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payments')
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='payments')
+    discount = models.ForeignKey(
+        'Discount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments',
+        help_text='Discount code used for this payment'
+    )
     
     # Payment Details
     amount = models.DecimalField(max_digits=10, decimal_places=2)

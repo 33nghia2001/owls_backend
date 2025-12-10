@@ -10,13 +10,14 @@ class PaymentSerializer(serializers.ModelSerializer):
     """Serializer cho Payment"""
     user_name = serializers.CharField(source='user.username', read_only=True)
     course_title = serializers.CharField(source='course.title', read_only=True)
+    discount_code = serializers.CharField(source='discount.code', read_only=True)
     payment_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Payment
         fields = [
             'id', 'transaction_id', 'user', 'user_name', 'course', 'course_title',
-            'amount', 'currency', 'payment_method', 'status',
+            'amount', 'currency', 'payment_method', 'status', 'discount', 'discount_code',
             'gateway_transaction_id', 'description', 'payment_url',
             'created_at', 'paid_at'
         ]
@@ -39,6 +40,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         """Validate payment data"""
         request = self.context.get('request')
         course = data.get('course')
+        discount = data.get('discount')
         
         if request and course:
             # Kiểm tra đã enroll chưa
@@ -48,21 +50,62 @@ class PaymentSerializer(serializers.ModelSerializer):
                     'course': 'You are already enrolled in this course.'
                 })
             
-            # Kiểm tra đã có pending payment chưa
-            if Payment.objects.filter(
+            # AUTO-CANCEL old pending payments (Fix UX issue)
+            from django.utils import timezone
+            from datetime import timedelta
+            old_pending = Payment.objects.filter(
                 user=request.user,
                 course=course,
-                status='pending'
-            ).exists():
+                status='pending',
+                created_at__lt=timezone.now() - timedelta(minutes=15)
+            )
+            old_pending.update(status='expired')
+            
+            # Kiểm tra còn pending payment mới (< 15 phút)
+            recent_pending = Payment.objects.filter(
+                user=request.user,
+                course=course,
+                status='pending',
+                created_at__gte=timezone.now() - timedelta(minutes=15)
+            ).exists()
+            
+            if recent_pending:
                 raise serializers.ValidationError({
-                    'course': 'You already have a pending payment for this course.'
+                    'course': 'You have a pending payment for this course. Please complete or cancel it first.'
                 })
             
-            # Validate amount khớp với course price
+            # Validate discount nếu có
+            if discount:
+                if not discount.is_active:
+                    raise serializers.ValidationError({'discount': 'This discount code is not active.'})
+                
+                # Kiểm tra usage limit với race condition protection
+                if discount.usage_limit and discount.used_count >= discount.usage_limit:
+                    raise serializers.ValidationError({'discount': 'This discount code has reached its usage limit.'})
+                
+                # Kiểm tra min purchase
+                if discount.min_purchase_amount and course.price < discount.min_purchase_amount:
+                    raise serializers.ValidationError({
+                        'discount': f'Minimum purchase amount is {discount.min_purchase_amount} VND'
+                    })
+            
+            # Validate amount khớp với course price (nếu không có discount)
             amount = data.get('amount')
-            if amount != course.price:
+            expected_amount = course.price
+            
+            # Nếu có discount, tính giá sau giảm
+            if discount:
+                if discount.discount_type == 'percentage':
+                    discount_amount = course.price * (discount.discount_value / 100)
+                    if discount.max_discount_amount:
+                        discount_amount = min(discount_amount, discount.max_discount_amount)
+                else:
+                    discount_amount = discount.discount_value
+                expected_amount = max(0, course.price - discount_amount)
+            
+            if float(amount) != float(expected_amount):
                 raise serializers.ValidationError({
-                    'amount': f'Amount must match course price: {course.price} VND'
+                    'amount': f'Amount must be {expected_amount} VND'
                 })
         
         return data

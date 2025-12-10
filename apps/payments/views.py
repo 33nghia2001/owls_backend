@@ -6,7 +6,7 @@ from rest_framework.throttling import UserRateThrottle
 from django.shortcuts import redirect
 from django.utils import timezone
 from django.db import transaction
-from .models import Payment, VNPayTransaction, Discount
+from .models import Payment, VNPayTransaction, Discount, DiscountUsage
 from .serializers import (
     PaymentSerializer,
     VNPayTransactionSerializer,
@@ -197,6 +197,18 @@ class VNPayReturnView(APIView):
                     payment.gateway_transaction_id = vnpay_params.get('vnp_TransactionNo')
                     payment.save()
                     
+                    # Xử lý Discount Usage
+                    if payment.discount:
+                        from django.db.models import F
+                        Discount.objects.filter(id=payment.discount.id).update(
+                            used_count=F('used_count') + 1
+                        )
+                        DiscountUsage.objects.create(
+                            user=payment.user,
+                            discount=payment.discount,
+                            payment=payment
+                        )
+                    
                     # Tạo Enrollment tự động
                     from apps.enrollments.models import Enrollment
                     Enrollment.objects.get_or_create(
@@ -260,6 +272,20 @@ class VNPayIPNView(APIView):
                     payment.paid_at = timezone.now()
                     payment.gateway_transaction_id = vnpay_params.get('vnp_TransactionNo')
                     payment.save()
+                    
+                    # Xử lý Discount Usage (CRITICAL: Race Condition Protection)
+                    if payment.discount:
+                        from django.db.models import F
+                        # Dùng F() expression để tăng used_count an toàn
+                        Discount.objects.filter(id=payment.discount.id).update(
+                            used_count=F('used_count') + 1
+                        )
+                        # Tạo DiscountUsage record
+                        DiscountUsage.objects.create(
+                            user=payment.user,
+                            discount=payment.discount,
+                            payment=payment
+                        )
                     
                     # Tạo Enrollment
                     from apps.enrollments.models import Enrollment
