@@ -67,16 +67,36 @@ class CourseViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         """
         Cached course list with version-based invalidation.
-        SECURITY: Uses cache versioning to prevent DoS via delete_pattern().
+        
+        SECURITY FIXES:
+        1. Uses cache versioning to prevent DoS via delete_pattern()
+        2. Whitelists query params to prevent Redis OOM via cache explosion (Gemini Audit)
         """
         from apps.courses.signals import COURSE_LIST_VERSION_KEY
+        import hashlib
         
         # Get current cache version
         version = cache.get(COURSE_LIST_VERSION_KEY, 0)
         
-        # Include query params in cache key for filtered results
-        query_params = request.GET.urlencode()
-        cache_key = f'course_list_v{version}_{query_params}'
+        # SECURITY FIX: Only cache whitelisted query params to prevent cache explosion
+        # Attacker cannot fill Redis with random params like ?q=random1, ?q=random2...
+        CACHEABLE_PARAMS = ['category', 'level', 'is_free', 'page', 'page_size', 'ordering', 'search']
+        
+        # Build sanitized query string from whitelisted params only
+        sanitized_params = {}
+        for param in CACHEABLE_PARAMS:
+            value = request.GET.get(param)
+            if value:
+                # Limit param length to prevent extremely long cache keys
+                sanitized_params[param] = str(value)[:100]
+        
+        # Hash the params to create fixed-length cache key (prevents key length issues)
+        if sanitized_params:
+            params_str = '&'.join(f'{k}={v}' for k, v in sorted(sanitized_params.items()))
+            params_hash = hashlib.md5(params_str.encode()).hexdigest()
+            cache_key = f'course_list_v{version}_{params_hash}'
+        else:
+            cache_key = f'course_list_v{version}_default'
         
         # Try to get from cache
         cached_data = cache.get(cache_key)

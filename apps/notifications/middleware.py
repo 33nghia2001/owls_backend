@@ -100,14 +100,27 @@ class JWTAuthMiddleware(BaseMiddleware):
             # - Delete ticket after first use (single-use)
             # - Return associated user
             
-            # Placeholder - implement actual ticket system
+            # SECURITY FIX (Gemini Audit): Atomic get-and-delete to prevent ticket replay
+            # Multiple concurrent connections could reuse the same ticket if get/delete aren't atomic
             from django.core.cache import cache
-            user_id = cache.get(f'ws_ticket:{ticket}')
+            
+            # Use cache.get() then cache.delete() with existence check
+            # For Redis 6.2+, this could be replaced with GETDEL command via Lua script
+            ticket_key = f'ws_ticket:{ticket}'
+            user_id = cache.get(ticket_key)
+            
             if user_id:
-                # Delete ticket immediately (single-use)
-                cache.delete(f'ws_ticket:{ticket}')
-                user = User.objects.get(id=user_id)
-                return user
+                # Attempt to delete - if it returns False, another request already used it
+                deleted = cache.delete(ticket_key)
+                if not deleted:
+                    # Ticket was already consumed by another connection
+                    return AnonymousUser()
+                
+                try:
+                    user = User.objects.get(id=user_id)
+                    return user
+                except User.DoesNotExist:
+                    return AnonymousUser()
             
             return AnonymousUser()
             

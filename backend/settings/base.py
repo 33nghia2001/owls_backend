@@ -195,8 +195,18 @@ IPWARE_META_PRECEDENCE_ORDER = (
 # In production, set IPWARE_TRUSTED_PROXY_LIST in environment variables
 IPWARE_TRUSTED_PROXY_LIST = env.list('IPWARE_TRUSTED_PROXY_LIST', default=[])
 
-# For Cloudflare, you would set in .env:
-# IPWARE_TRUSTED_PROXY_LIST=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,etc.
+# SECURITY WARNING (Gemini Audit): Validate proxy configuration in production!
+# If deploying behind Cloudflare/Nginx without setting IPWARE_TRUSTED_PROXY_LIST:
+# 1. get_client_ip() may return proxy IP (10.0.0.1) for all requests
+# 2. Attackers can spoof X-Forwarded-For: 127.0.0.1 to bypass IP whitelist
+# 
+# For Cloudflare, set in .env:
+# IPWARE_TRUSTED_PROXY_LIST=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22
+#
+# For AWS ALB/NLB, set your load balancer's private IP range
+# IPWARE_TRUSTED_PROXY_LIST=10.0.0.0/8,172.16.0.0/12
+#
+# WARNING: Leaving this empty in production with a reverse proxy is a SECURITY RISK!
 
 # 11. Redis & Celery & Channels
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')

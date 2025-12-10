@@ -192,20 +192,43 @@ class PaymentViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Hủy payment và hoàn trả discount slot"""
-        payment = self.get_object()
+        """
+        Hủy payment và hoàn trả discount slot.
         
-        if payment.user != request.user and request.user.role != 'admin':
-            return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
-        
-        if payment.status != 'pending':
-            return Response({'error': 'Only pending payments can be cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
-        
+        SECURITY FIX (Gemini Audit): Prevents "Discount Farming" via race condition.
+        Multiple concurrent cancel requests could cause used_count to become negative,
+        resurrecting expired discount codes.
+        """
+        # CRITICAL: Use select_for_update() to lock row and prevent race condition
         with transaction.atomic():
+            try:
+                # Lock the payment row immediately to prevent concurrent cancellations
+                payment = Payment.objects.select_for_update().get(
+                    pk=pk,
+                    user=request.user  # Ensure ownership within the lock
+                )
+            except Payment.DoesNotExist:
+                # Also handle admin permission
+                if request.user.role == 'admin':
+                    try:
+                        payment = Payment.objects.select_for_update().get(pk=pk)
+                    except Payment.DoesNotExist:
+                        return Response({'error': 'Payment not found.'}, status=status.HTTP_404_NOT_FOUND)
+                else:
+                    return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Check status within the locked transaction
+            if payment.status != 'pending':
+                return Response(
+                    {'error': 'Only pending payments can be cancelled.'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update status
             payment.status = 'cancelled'
             payment.save(update_fields=['status'])
             
-            # Refund discount slot
+            # Refund discount slot (now safe from race condition)
             if payment.discount:
                 Discount.objects.filter(id=payment.discount.id).update(
                     used_count=F('used_count') - 1
