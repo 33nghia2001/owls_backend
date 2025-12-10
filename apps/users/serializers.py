@@ -32,6 +32,9 @@ class UserSerializer(serializers.ModelSerializer):
     """
     Serializer đầy đủ thông tin User.
     CHỈ DÙNG cho chính user đó (khi xem profile của mình) hoặc Admin.
+    
+    SECURITY FIX: Email is read-only to prevent account takeover.
+    Users must verify new email before changing (implement separate email change flow).
     """
     class Meta:
         model = User
@@ -39,8 +42,8 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 
             'role', 'avatar', 'bio'
         ]
-        # Role chỉ được phép đọc, không cho phép user tự sửa role của mình qua API này
-        read_only_fields = ['role']
+        # Role and email are read-only to prevent privilege escalation and account takeover
+        read_only_fields = ['role', 'email']
 
 
 class RegisterSerializer(serializers.ModelSerializer):

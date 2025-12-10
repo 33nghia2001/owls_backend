@@ -44,6 +44,22 @@ class Payment(models.Model):
     currency = models.CharField(max_length=3, default='VND')
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
     
+    # BUSINESS LOGIC FIX: Store original price and discount amount at payment creation
+    # This ensures financial accuracy even if course price or discount changes later
+    original_price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Original course price at time of payment'
+    )
+    discount_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text='Actual discount amount applied (calculated value, not percentage)'
+    )
+    
     # Status
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     

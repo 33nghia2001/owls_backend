@@ -70,7 +70,7 @@ def process_payment_confirmation(payment, vnp_params):
                 user=payment.user,
                 discount=payment.discount,
                 payment=payment,
-                amount_saved=payment.discount.discount_value  # Nên lưu số tiền đã giảm
+                amount_saved=payment.discount_amount  # Use calculated amount, not raw value
             )
         
         # Tạo Enrollment (Idempotent: get_or_create)
@@ -144,10 +144,25 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError({'discount': 'This discount code has reached its usage limit.'})
         
-        # 2. Save payment
+        # 2. Calculate and save original_price and discount_amount
+        course = serializer.validated_data['course']
+        original_price = course.price
+        discount_amount = 0
+        
+        if discount:
+            if discount.discount_type == 'percentage':
+                discount_amount = (original_price * discount.discount_value) / 100
+                if discount.max_discount_amount:
+                    discount_amount = min(discount_amount, discount.max_discount_amount)
+            else:
+                discount_amount = discount.discount_value
+        
+        # 3. Save payment with snapshot values
         payment = serializer.save(
             user=self.request.user,
             status='pending',
+            original_price=original_price,
+            discount_amount=discount_amount,
             ip_address=self.get_client_ip(),
             user_agent=self.request.META.get('HTTP_USER_AGENT', '')
         )
@@ -289,12 +304,11 @@ class VNPayReturnView(APIView):
                 success, created_enrollment, enrollment_id = process_payment_confirmation(payment, vnpay_params)
                 
                 if success:
-                    # Trigger async tasks inside transaction block? No, after commit.
-                    # In Django views, on_commit hook is better, but simple delay is okay here 
-                    # as tasks handle DoesNotExist gracefully.
-                    send_payment_success_email.delay(payment.id)
+                    # Use transaction.on_commit to prevent Celery race condition
+                    # Tasks will only be sent after database transaction commits successfully
+                    transaction.on_commit(lambda: send_payment_success_email.delay(payment.id))
                     if created_enrollment:
-                        send_enrollment_confirmation_email.delay(enrollment_id)
+                        transaction.on_commit(lambda eid=enrollment_id: send_enrollment_confirmation_email.delay(eid))
                     
                     return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
                 else:
@@ -340,9 +354,10 @@ class VNPayIPNView(APIView):
                 success, created_enrollment, enrollment_id = process_payment_confirmation(payment, vnpay_params)
                 
                 if success:
-                    send_payment_success_email.delay(payment.id)
+                    # Use transaction.on_commit to prevent Celery race condition
+                    transaction.on_commit(lambda: send_payment_success_email.delay(payment.id))
                     if created_enrollment:
-                        send_enrollment_confirmation_email.delay(enrollment_id)
+                        transaction.on_commit(lambda eid=enrollment_id: send_enrollment_confirmation_email.delay(eid))
             
             return Response({'RspCode': '00', 'Message': 'Confirm Success'})
             

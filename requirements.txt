@@ -21,7 +21,7 @@ cloudinary>=1.36.0
 whitenoise>=6.6.0
 
 # CAPTCHA Protection
-django-turnstile>=0.2.1  # Cloudflare Turnstile
+# django-turnstile>=0.2.1  # Cloudflare Turnstile (commented out - version not available)
 
 # HTML Sanitization
 bleach>=6.0.0  # XSS protection
@@ -42,7 +42,8 @@ channels-redis>=4.1.0  # Redis channel layer
 daphne>=4.0.0  # ASGI server for Channels
 
 # File Upload Security
-python-magic-bin>=0.4.14  # Windows-compatible magic bytes detection for file validation
+# python-magic-bin>=0.4.14  # Windows-compatible (DEPRECATED: Windows-only, won't work on Linux)
+python-magic>=0.4.27  # Cross-platform magic bytes detection (requires libmagic1 on Linux)
 
 # Utilities
 requests>=2.31.0  # For API calls
