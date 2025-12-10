@@ -364,9 +364,9 @@ def cleanup_expired_payments():
         
         for payment in expired_payments:
             payment_ids.append(payment.id)
-            if payment.discount:
-                discount_id = payment.discount.id
-                discount_refund_map[discount_id] = discount_refund_map.get(discount_id, 0) + 1
+            # SAFETY: Check both discount existence and discount_id to prevent AttributeError
+            if payment.discount_id:
+                discount_refund_map[payment.discount_id] = discount_refund_map.get(payment.discount_id, 0) + 1
         
         # 3. Bulk update discounts (Atomic decrement)
         for discount_id, count in discount_refund_map.items():
