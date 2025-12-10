@@ -28,20 +28,30 @@ class TestPaymentCreation:
         assert payment.amount == course.price
         assert payment.status == 'pending'
 
-    def test_create_payment_for_free_course_blocked(self, authenticated_client, student_user, free_course):
-        """Test cannot create payment for free course"""
+    def test_create_payment_for_free_course_auto_enrolls(self, authenticated_client, student_user, free_course):
+        """Test creating payment for free course auto-completes and enrolls user"""
         url = reverse('payment-list')
         data = {
             'course': free_course.id
         }
         response = authenticated_client.post(url, data, format='json')
         
-        # Should reject free course payments
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        # Free course payments auto-complete (no payment gateway needed)
+        assert response.status_code in [status.HTTP_201_CREATED, status.HTTP_200_OK]
+        
+        # Verify payment was auto-completed
+        payment = Payment.objects.get(user=student_user, course=free_course)
+        assert payment.status == 'completed'
+        assert payment.payment_method == 'free'
+        assert payment.amount == Decimal('0')
+        assert payment.paid_at is not None
+        
+        # Verify enrollment was created immediately
+        assert Enrollment.objects.filter(student=student_user, course=free_course, status='active').exists()
 
-    def test_create_duplicate_pending_payment_blocked(self, authenticated_client, student_user, course):
-        """Test cannot create duplicate pending payments"""
-        # Create first payment
+    def test_create_duplicate_pending_payment_blocked(self, authenticated_client, student_user, course, instructor_user):
+        """Test cannot create more than 2 pending payments (anti-spam protection)"""
+        # Create first pending payment
         Payment.objects.create(
             user=student_user,
             course=course,
@@ -49,12 +59,38 @@ class TestPaymentCreation:
             status='pending'
         )
         
+        # Create second course for second payment (to bypass same-course check)
+        course2 = Course.objects.create(
+            title='Course 2',
+            description='Second course',
+            instructor=instructor_user,
+            price=Decimal('200000')
+        )
+        
+        # Create second pending payment (should succeed - limit is 2)
+        Payment.objects.create(
+            user=student_user,
+            course=course2,
+            amount=course2.price,
+            status='pending'
+        )
+        
+        # Create third course for third payment attempt
+        course3 = Course.objects.create(
+            title='Course 3',
+            description='Third course',
+            instructor=instructor_user,
+            price=Decimal('300000')
+        )
+        
+        # Try to create 3rd pending payment - should be blocked
         url = reverse('payment-list')
-        data = {'course': course.id}
+        data = {'course': course3.id}
         response = authenticated_client.post(url, data, format='json')
         
-        # Should reject duplicate pending payment
+        # Should reject 3rd pending payment (Ghost Payment DOS protection)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'pending' in str(response.data).lower() or 'ghost' in str(response.data).lower()
 
     def test_create_payment_for_already_enrolled_blocked(self, authenticated_client, student_user, course, enrollment):
         """Test cannot create payment if already enrolled"""
@@ -139,8 +175,8 @@ class TestDiscountCode:
             code='LIMITED',
             discount_type='percentage',
             discount_value=Decimal('20'),
-            usage_limit=1,
-            used_count=1,
+            max_uses=1,
+            current_uses=1,
             is_active=True
         )
         
@@ -300,6 +336,7 @@ class TestPaymentSecurity:
         reversed_amount = Decimal(str(vnpay_amount)) / 100
         assert reversed_amount == payment.amount
 
+    @pytest.mark.django_db(transaction=True)
     def test_payment_race_condition_prevented(self, student_user, course):
         """Test concurrent payment confirmations don't create duplicate enrollments"""
         import threading
