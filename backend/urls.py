@@ -27,7 +27,8 @@ router.register(r'payments', PaymentViewSet, basename='payment')
 router.register(r'discounts', DiscountViewSet, basename='discount')
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # Secure Admin URL - Changed from default /admin/ to prevent brute-force attacks
+    path('quan-tri-vien-secure-8899/', admin.site.urls),
     path('api/v1/', include(router.urls)),
     
     # VNPay Callbacks

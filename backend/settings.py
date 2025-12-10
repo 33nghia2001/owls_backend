@@ -44,6 +44,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',  # For logout functionality
     'corsheaders',
     'drf_spectacular',
     'cloudinary_storage',
@@ -72,6 +73,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'backend.middleware.AdminIPWhitelistMiddleware',  # Custom: Admin IP whitelist protection
 ]
 
 ROOT_URLCONF = 'backend.urls'
@@ -179,11 +181,12 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),  # Reduced from 1 hour to 15 minutes
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
+    'BLACKLIST_AFTER_ROTATION': True,  # Blacklist old refresh tokens after rotation
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'UPDATE_LAST_LOGIN': True,  # Update user's last_login field on token generation
 }
 
 
@@ -229,6 +232,18 @@ TURNSTILE_TEST_MODE = env.bool('TURNSTILE_TEST_MODE', default=DEBUG)
 
 # 14. Security (Production)
 # ------------------------------------------------------------------------------
+
+# Admin IP Whitelist (comma-separated IPs allowed to access admin panel)
+ADMIN_IP_WHITELIST = env('ADMIN_IP_WHITELIST', default='')
+
+# Proxy Configuration - Get real IP from load balancer/proxy
+# Set this if behind Nginx, Cloudflare, or any reverse proxy
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# Number of proxies between client and Django (usually 1 for Nginx, may vary for Cloudflare)
+# This helps Django get the real client IP from X-Forwarded-For header
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
+
 if not DEBUG:
     # Bật các tính năng bảo mật khi deploy
     SECURE_BROWSER_XSS_FILTER = True
