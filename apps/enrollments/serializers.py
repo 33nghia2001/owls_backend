@@ -41,3 +41,19 @@ class QuizAttemptSerializer(serializers.ModelSerializer):
         fields = ['id', 'enrollment', 'quiz', 'score', 'max_score', 'passed', 
                   'answers', 'time_taken', 'started_at', 'completed_at']
         read_only_fields = ['enrollment', 'started_at', 'completed_at']
+    
+    def validate(self, data):
+        """
+        Kiểm tra tính hợp lệ chéo giữa Enrollment và Quiz.
+        Quiz này phải thuộc về khóa học của Enrollment này.
+        """
+        enrollment = data.get('enrollment')
+        quiz = data.get('quiz')
+        
+        if enrollment and quiz:
+            # Quiz này phải thuộc về khóa học của Enrollment này
+            if quiz.lesson.section.course_id != enrollment.course_id:
+                raise serializers.ValidationError(
+                    "This quiz does not belong to the enrolled course."
+                )
+        return data

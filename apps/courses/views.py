@@ -61,7 +61,25 @@ class LessonViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsEnrolledOrInstructor]
 
     def get_queryset(self):
-        # Chỉ trả về các bài học thuộc khóa học published (trừ khi là instructor)
-        if self.request.user.is_authenticated and self.request.user.role == 'instructor':
+        from django.db import models
+        user = self.request.user
+        
+        # 1. Instructor xem hết bài học (để quản lý)
+        if user.is_authenticated and user.role == 'instructor':
              return Lesson.objects.all()
-        return Lesson.objects.filter(section__course__status='published')
+        
+        # 2. Student chỉ xem được bài học của khóa mình ĐÃ MUA (Active) hoặc bài học xem thử
+        if user.is_authenticated:
+            # Lấy danh sách ID các khóa học đã enroll active
+            enrolled_course_ids = user.enrollments.filter(
+                status='active'
+            ).values_list('course_id', flat=True)
+            
+            return Lesson.objects.filter(
+                models.Q(section__course__id__in=enrolled_course_ids) | 
+                models.Q(is_preview=True),
+                section__course__status='published'
+            ).distinct()
+            
+        # 3. Anonymous user chỉ thấy bài preview
+        return Lesson.objects.filter(is_preview=True, section__course__status='published')
