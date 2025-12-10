@@ -42,8 +42,9 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 
             'role', 'avatar', 'bio'
         ]
-        # Role and email are read-only to prevent privilege escalation and account takeover
-        read_only_fields = ['role', 'email']
+        # SECURITY FIX: Lock role, email, and username to prevent privilege escalation,
+        # account takeover, and impersonation attacks
+        read_only_fields = ['role', 'email', 'username']
 
 
 class RegisterSerializer(serializers.ModelSerializer):

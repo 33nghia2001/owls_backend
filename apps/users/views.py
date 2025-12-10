@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import UserSerializer, RegisterSerializer, CustomTokenObtainPairSerializer
 from django.contrib.auth import get_user_model
+from apps.core.permissions import IsAdminUser, IsOwnerOrAdmin
 
 User = get_user_model()
 
@@ -26,8 +27,15 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     
     def get_permissions(self):
-        if self.action == 'create': # Đăng ký
+        """SECURITY FIX: Restrict access based on action type"""
+        if self.action == 'create':  # Registration
             return [permissions.AllowAny()]
+        elif self.action in ['list', 'destroy']:
+            # Only admin can list all users or delete users
+            return [permissions.IsAuthenticated(), IsAdminUser()]
+        elif self.action in ['retrieve', 'update', 'partial_update']:
+            # Only owner or admin can view/edit user profile
+            return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
         return [permissions.IsAuthenticated()]
     
     def get_throttles(self):

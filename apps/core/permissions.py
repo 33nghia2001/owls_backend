@@ -14,6 +14,22 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         return obj.user == request.user or request.user.is_staff
 
 
+class IsAdminUser(permissions.BasePermission):
+    """Check if user has admin role"""
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated and request.user.role == 'admin'
+
+
+class IsOwnerOrAdmin(permissions.BasePermission):
+    """Allow only owner or admin to modify user object"""
+    def has_object_permission(self, request, view, obj):
+        # Admin can do anything
+        if request.user.role == 'admin':
+            return True
+        # User can only modify their own profile
+        return obj.id == request.user.id
+
+
 class IsEnrolledOrInstructor(permissions.BasePermission):
     """
     Permission để kiểm tra user có quyền xem nội dung bài học không.

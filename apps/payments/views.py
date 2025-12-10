@@ -112,6 +112,14 @@ class PaymentCreateThrottle(UserRateThrottle):
     scope = 'payment'
 
 
+class DiscountCheckThrottle(UserRateThrottle):
+    """
+    Limit discount code validation to prevent brute-force attacks.
+    Rate: 10 requests / hour
+    """
+    rate = '10/hour'
+
+
 class PaymentViewSet(viewsets.ModelViewSet):
     """
     ViewSet quản lý thanh toán.
@@ -120,8 +128,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_throttles(self):
+        """SECURITY FIX: Apply throttles to prevent abuse"""
         if self.action == 'create':
             return [PaymentCreateThrottle()]
+        if self.action == 'apply_discount':
+            return [DiscountCheckThrottle()]
         return super().get_throttles()
     
     def get_queryset(self):
