@@ -280,7 +280,7 @@ class TestGoogleOAuth:
             'email_verified': True
         }
         
-        url = reverse('oauth_google_callback')
+        url = reverse('google_callback')
         response = api_client.post(url, {'code': 'mock_auth_code'}, format='json')
         
         # Verify user created with UUID username (not 'newuser')
@@ -305,7 +305,7 @@ class TestGoogleOAuth:
             'email_verified': False
         }
         
-        url = reverse('oauth_google_callback')
+        url = reverse('google_callback')
         response = api_client.post(url, {'code': 'mock_auth_code'}, format='json')
         
         # Should reject unverified emails
@@ -323,7 +323,7 @@ class TestGoogleOAuth:
             'email_verified': True
         }
         
-        url = reverse('oauth_google_callback')
+        url = reverse('google_callback')
         response = api_client.post(url, {'code': 'mock_auth_code'}, format='json')
         
         # Should either:
@@ -347,7 +347,7 @@ class TestGoogleOAuth:
             'email_verified': True
         }
         
-        url = reverse('oauth_google_callback')
+        url = reverse('google_callback')
         response = api_client.post(url, {'code': 'valid_code'}, format='json')
         
         if response.status_code == status.HTTP_200_OK:

@@ -1,10 +1,3 @@
-import os
-import django
-
-# Configure Django settings before any imports
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings.base')
-django.setup()
-
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient

@@ -16,8 +16,8 @@ class TestWebSocketTicket:
 
     def test_generate_ticket_authenticated(self, authenticated_client, student_user):
         """Test authenticated users can generate WebSocket tickets"""
-        url = reverse('ws-ticket')
-        response = authenticated_client.post(url)
+        url = reverse('generate_ws_ticket')
+        response = authenticated_client.get(url)
         
         assert response.status_code == status.HTTP_200_OK
         assert 'ticket' in response.data
@@ -26,7 +26,7 @@ class TestWebSocketTicket:
 
     def test_generate_ticket_unauthenticated(self, api_client):
         """Test unauthenticated users cannot generate tickets"""
-        url = reverse('ws-ticket')
+        url = reverse('generate_ws_ticket')
         response = api_client.post(url)
         
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -36,14 +36,14 @@ class TestWebSocketTicket:
         """Test ticket generation is rate limited (10/min)"""
         mock_throttle.return_value = False
         
-        url = reverse('ws-ticket')
+        url = reverse('generate_ws_ticket')
         response = authenticated_client.post(url)
         
         assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
     def test_ticket_contains_ws_base_url(self, authenticated_client):
         """Test ticket response includes configured WebSocket URL"""
-        url = reverse('ws-ticket')
+        url = reverse('generate_ws_ticket')
         response = authenticated_client.post(url)
         
         if response.status_code == status.HTTP_200_OK:
@@ -246,7 +246,7 @@ class TestWebSocketSecurity:
     def test_ticket_single_use(self, authenticated_client, student_user):
         """Test WebSocket tickets are single-use only"""
         # Generate ticket
-        url = reverse('ws-ticket')
+        url = reverse('generate_ws_ticket')
         response = authenticated_client.post(url)
         ticket = response.data['ticket']
         
@@ -256,7 +256,7 @@ class TestWebSocketSecurity:
 
     def test_ticket_expiration(self, authenticated_client):
         """Test WebSocket tickets expire after 30 seconds"""
-        url = reverse('ws-ticket')
+        url = reverse('generate_ws_ticket')
         response = authenticated_client.post(url)
         
         # Ticket should have expiration time

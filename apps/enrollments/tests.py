@@ -178,7 +178,7 @@ class TestCourseCompletion:
         # Trigger certificate endpoint (REAL Celery task)
         url = reverse('enrollment-generate-certificate', kwargs={'pk': enrollment.id})
         
-        with patch('apps.enrollments.tasks.generate_certificate_task.delay') as mock_task:
+        with patch('apps.payments.tasks.generate_course_certificate.delay') as mock_task:
             response = authenticated_client.post(url)
             
             if response.status_code == status.HTTP_200_OK:
