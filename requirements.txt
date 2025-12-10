@@ -29,6 +29,18 @@ bleach>=6.0.0  # XSS protection
 # IP Address Handling
 django-ipware>=7.0.1  # Accurate client IP detection (防止IP欺骗)
 
+# Async Tasks & Caching
+celery[redis]>=5.3.0  # Async task queue with Redis support
+django-redis>=5.4.0  # Redis cache backend
+
+# Social Authentication
+social-auth-app-django>=5.4.0  # Google OAuth integration
+
+# WebSockets & Real-time
+channels>=4.0.0  # Django Channels for WebSockets
+channels-redis>=4.1.0  # Redis channel layer
+daphne>=4.0.0  # ASGI server for Channels
+
 # Utilities
 requests>=2.31.0  # For API calls
 python-dateutil>=2.8.2

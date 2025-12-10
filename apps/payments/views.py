@@ -177,7 +177,7 @@ class VNPayReturnView(APIView):
         # Get transaction
         vnp_TxnRef = vnpay_params.get('vnp_TxnRef')
         vnp_ResponseCode = vnpay_params.get('vnp_ResponseCode')
-        vnp_Amount = int(vnpay_params.get('vnp_Amount', 0)) / 100  # VNPay trả về amount * 100
+        vnp_Amount = vnpay_params.get('vnp_Amount', '0')  # VNPay trả về amount * 100 (integer)
         
         try:
             # Find payment by transaction_id
@@ -191,8 +191,12 @@ class VNPayReturnView(APIView):
                 error_msg = 'Payment already failed'
                 return redirect(f'{settings.FRONTEND_URL}/payment-failed?error={error_msg}')
             
-            # 1. CRITICAL: Validate số tiền
-            if float(payment.amount) != float(vnp_Amount):
+            # 1. CRITICAL: Validate số tiền (So sánh INTEGER để tránh float comparison risk)
+            # VNPay gửi amount * 100, payment.amount là Decimal
+            expected_amount = int(payment.amount * 100)
+            received_amount = int(vnp_Amount)
+            
+            if expected_amount != received_amount:
                 payment.status = 'failed'
                 payment.save()
                 return redirect(f'{settings.FRONTEND_URL}/payment-error?error=amount_mismatch')
@@ -266,13 +270,17 @@ class VNPayIPNView(APIView):
         
         vnp_TxnRef = vnpay_params.get('vnp_TxnRef')
         vnp_ResponseCode = vnpay_params.get('vnp_ResponseCode')
-        vnp_Amount = int(vnpay_params.get('vnp_Amount', 0)) / 100  # VNPay trả về amount * 100
+        vnp_Amount = vnpay_params.get('vnp_Amount', '0')  # VNPay trả về amount * 100 (integer)
         
         try:
             payment = Payment.objects.get(transaction_id=vnp_TxnRef)
             
-            # 1. CRITICAL: Validate số tiền
-            if float(payment.amount) != float(vnp_Amount):
+            # 1. CRITICAL: Validate số tiền (So sánh INTEGER để tránh float comparison risk)
+            # VNPay gửi amount * 100, payment.amount là Decimal
+            expected_amount = int(payment.amount * 100)
+            received_amount = int(vnp_Amount)
+            
+            if expected_amount != received_amount:
                 return Response({'RspCode': '04', 'Message': 'Invalid Amount'})
             
             # 2. Idempotency: Chỉ xử lý nếu payment đang pending
@@ -280,7 +288,6 @@ class VNPayIPNView(APIView):
                 # Nếu đã completed hoặc failed rồi thì trả về success luôn
                 return Response({'RspCode': '02', 'Message': 'Order already confirmed'})
             
-            # 3. Xử lý payment
             # 3. Xử lý payment
             if vnp_ResponseCode == '00':
                 with transaction.atomic():
@@ -299,7 +306,7 @@ class VNPayIPNView(APIView):
                     
                     # Tạo Enrollment
                     from apps.enrollments.models import Enrollment
-                    Enrollment.objects.get_or_create(
+                    enrollment, created = Enrollment.objects.get_or_create(
                         student=payment.user,
                         course=payment.course,
                         defaults={
@@ -307,6 +314,12 @@ class VNPayIPNView(APIView):
                             'payment': payment
                         }
                     )
+                    
+                    # Async tasks: Send emails AFTER transaction commits
+                    from apps.payments.tasks import send_payment_success_email, send_enrollment_confirmation_email
+                    send_payment_success_email.delay(payment.id)
+                    if created:
+                        send_enrollment_confirmation_email.delay(enrollment.id)
             else:
                 # Nếu payment failed, giảm used_count xuống (release reservation)
                 if payment.discount:

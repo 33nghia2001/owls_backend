@@ -1,5 +1,9 @@
 from rest_framework import viewsets, filters, permissions
 from django_filters.rest_framework import DjangoFilterBackend
+from django.core.cache import cache
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
+from django.views.decorators.vary import vary_on_headers
 from .models import Course, Category, Lesson
 from .serializers import (
     CourseListSerializer, 
@@ -9,12 +13,28 @@ from .serializers import (
 )
 from apps.core.permissions import IsInstructorOrReadOnly, IsEnrolledOrInstructor
 
+
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for categories with Redis caching.
+    Cache for 30 minutes as categories rarely change.
+    """
     queryset = Category.objects.filter(is_active=True)
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
+    
+    @method_decorator(cache_page(60 * 30))  # Cache 30 minutes
+    @method_decorator(vary_on_headers('Accept-Language'))
+    def list(self, request, *args, **kwargs):
+        """Cached category list"""
+        return super().list(request, *args, **kwargs)
+
 
 class CourseViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for courses with intelligent caching.
+    List view cached for 15 minutes, detail view for 10 minutes.
+    """
     queryset = Course.objects.filter(status='published')
     permission_classes = [IsInstructorOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -27,6 +47,26 @@ class CourseViewSet(viewsets.ModelViewSet):
         if self.action == 'retrieve':
             return CourseDetailSerializer
         return CourseListSerializer
+
+    @method_decorator(cache_page(60 * 15))  # Cache 15 minutes
+    def list(self, request, *args, **kwargs):
+        """Cached course list"""
+        return super().list(request, *args, **kwargs)
+    
+    def retrieve(self, request, *args, **kwargs):
+        """Retrieve with caching"""
+        slug = kwargs.get('slug')
+        cache_key = f'course_detail_{slug}'
+        
+        # Try cache first
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return cached_data
+        
+        # If not cached, get from DB and cache
+        response = super().retrieve(request, *args, **kwargs)
+        cache.set(cache_key, response, 60 * 10)  # Cache 10 minutes
+        return response
 
     def get_queryset(self):
         user = self.request.user
