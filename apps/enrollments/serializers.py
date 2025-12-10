@@ -17,8 +17,42 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         model = Enrollment
         fields = ['id', 'student', 'course', 'course_detail', 'status', 'progress_percentage', 
                   'completed_lessons_count', 'enrolled_at', 'completed_at']
-        read_only_fields = ['student', 'status', 'progress_percentage', 'completed_lessons_count', 
+        read_only_fields = ['progress_percentage', 'completed_lessons_count', 
                            'enrolled_at', 'completed_at']
+    
+    def validate_student(self, value):
+        """
+        SECURITY: Only admins can specify student field.
+        Regular users cannot set student field (it's auto-assigned to request.user).
+        """
+        request = self.context.get('request')
+        if request and not request.user.is_staff:
+            raise serializers.ValidationError(
+                'You do not have permission to set the student field.'
+            )
+        return value
+    
+    def validate(self, data):
+        """
+        SECURITY: Prevent duplicate enrollments.
+        Check if student is already enrolled in this course.
+        """
+        student = data.get('student', self.context['request'].user if self.context.get('request') else None)
+        course = data.get('course')
+        
+        if student and course:
+            # Check for existing active or completed enrollment
+            if Enrollment.objects.filter(
+                student=student,
+                course=course,
+                status__in=['active', 'completed']
+            ).exists():
+                raise serializers.ValidationError({
+                    'course': 'Student is already enrolled in this course.',
+                    'detail': 'Cannot create duplicate enrollment for the same course.'
+                })
+        
+        return data
 
 
 class EnrollmentDetailSerializer(serializers.ModelSerializer):

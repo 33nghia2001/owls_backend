@@ -1,17 +1,22 @@
 # backend/apps/payments/views.py
 
 import logging
+from decimal import Decimal
+from typing import Tuple, Optional, Dict, Any
+
 from django.conf import settings
-from django.db import transaction
+from django.db import transaction, DatabaseError
 from django.db.models import F
 from django.shortcuts import redirect, get_object_or_404
 from django.utils import timezone
+from ipware import get_client_ip
 
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.throttling import UserRateThrottle
+from rest_framework.exceptions import ValidationError
 
 from .models import Payment, VNPayTransaction, Discount, DiscountUsage
 from .serializers import (
@@ -29,24 +34,39 @@ logger = logging.getLogger(__name__)
 
 
 # ==============================================================================
-# HELPER FUNCTIONS (Service Layer)
+# 1. HELPER FUNCTIONS (Service Layer - Pure Logic)
 # ==============================================================================
 
-def process_payment_confirmation(payment, vnp_params):
+def calculate_payment_amounts(course: Course, discount: Optional[Discount]) -> Tuple[Decimal, Decimal, Decimal]:
     """
-    Xử lý logic xác nhận thanh toán thành công.
-    Được gọi bởi cả IPN và Return URL để tránh lặp code.
+    Tính toán giá trị đơn hàng.
+    Returns: (original_price, discount_amount, final_price)
+    """
+    original_price = course.price
+    discount_amount = Decimal('0')
+
+    if discount:
+        if discount.discount_type == 'percentage':
+            calculated_dist = (original_price * discount.discount_value) / 100
+            if discount.max_discount_amount:
+                discount_amount = min(calculated_dist, discount.max_discount_amount)
+            else:
+                discount_amount = calculated_dist
+        else:
+            discount_amount = discount.discount_value
     
-    Args:
-        payment (Payment): Payment object đã được lock (select_for_update)
-        vnp_params (dict): Dữ liệu từ VNPay
-    
-    Returns:
-        bool: True nếu xử lý thành công, False nếu thất bại
+    final_price = max(Decimal('0'), original_price - discount_amount)
+    return original_price, discount_amount, final_price
+
+
+def process_payment_confirmation(payment: Payment, vnp_params: Dict[str, Any]) -> Tuple[bool, bool, Optional[int]]:
+    """
+    Xử lý logic nghiệp vụ khi thanh toán thành công (Update DB, Enroll, Notify).
+    Hàm này được gọi bên trong một transaction atomic.
     """
     vnp_response_code = vnp_params.get('vnp_ResponseCode')
     
-    # 1. Cập nhật thông tin transaction
+    # 1. Cập nhật thông tin transaction VNPay
     vnpay_transaction = payment.vnpay_transaction
     vnpay_transaction.vnp_ResponseCode = vnp_response_code
     vnpay_transaction.vnp_TransactionNo = vnp_params.get('vnp_TransactionNo')
@@ -70,10 +90,10 @@ def process_payment_confirmation(payment, vnp_params):
                 user=payment.user,
                 discount=payment.discount,
                 payment=payment,
-                amount_saved=payment.discount_amount  # Use calculated amount, not raw value
+                amount_saved=payment.discount_amount
             )
         
-        # Tạo Enrollment (Idempotent: get_or_create)
+        # Tạo Enrollment (Idempotent)
         enrollment, created = Enrollment.objects.get_or_create(
             student=payment.user,
             course=payment.course,
@@ -83,13 +103,15 @@ def process_payment_confirmation(payment, vnp_params):
             }
         )
         
-        # Gửi Email & Notification (Async Tasks)
-        # Chỉ gửi task sau khi transaction đã commit thành công (được gọi ở View)
+        # Cập nhật payment reference nếu enrollment đã tồn tại
+        if not created and not enrollment.payment:
+            enrollment.payment = payment
+            enrollment.save(update_fields=['payment'])
+        
         return True, created, enrollment.id
     
     else:
-        # Thanh toán thất bại
-        # Hoàn trả lượt dùng mã giảm giá
+        # Thanh toán thất bại -> Hoàn trả discount slot
         if payment.discount:
             Discount.objects.filter(id=payment.discount.id).update(
                 used_count=F('used_count') - 1
@@ -100,25 +122,77 @@ def process_payment_confirmation(payment, vnp_params):
         return False, False, None
 
 
+def execute_payment_confirmation(transaction_id: str, vnp_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Hàm wrapper xử lý toàn bộ quy trình confirm (Lock DB -> Validate -> Process).
+    Dùng chung cho cả IPN và Return URL để tránh lặp code.
+    
+    Returns: Dict kết quả để View xử lý response.
+    """
+    try:
+        with transaction.atomic():
+            # 1. Lock row
+            payment = Payment.objects.select_related('user', 'course', 'discount', 'vnpay_transaction')\
+                .select_for_update().get(transaction_id=transaction_id)
+            
+            # 2. Check Idempotency (Tránh xử lý lặp lại)
+            if payment.status == 'completed':
+                return {'status': 'success', 'code': '00', 'message': 'Payment already completed'}
+            
+            if payment.status == 'failed':
+                return {'status': 'error', 'code': '01', 'message': 'Payment previously failed'}
+            
+            if payment.status == 'cancelled':
+                return {'status': 'error', 'code': '02', 'message': 'Payment was cancelled'}
+            
+            # 3. Check Amount (So sánh integer để chính xác)
+            incoming_amount = int(vnp_params.get('vnp_Amount', '0'))
+            expected_amount = int(payment.amount * 100)
+            
+            if incoming_amount != expected_amount:
+                # Đánh dấu failed nếu sai tiền (nghi vấn hack)
+                payment.status = 'failed'
+                payment.save()
+                return {'status': 'error', 'code': '04', 'message': 'Invalid Amount'}
+            
+            # 4. Process Logic
+            success, created_enrollment, enrollment_id = process_payment_confirmation(payment, vnp_params)
+            
+            if success:
+                # Async Tasks (chỉ chạy sau khi commit)
+                transaction.on_commit(lambda: send_payment_success_email.delay(payment.id))
+                if created_enrollment:
+                    transaction.on_commit(lambda eid=enrollment_id: send_enrollment_confirmation_email.delay(eid))
+                
+                return {'status': 'success', 'code': '00', 'message': 'Confirm Success'}
+            else:
+                return {'status': 'error', 'code': vnp_params.get('vnp_ResponseCode'), 'message': 'Payment Failed from Gateway'}
+
+    except Payment.DoesNotExist:
+        return {'status': 'error', 'code': '01', 'message': 'Order not found'}
+    except Exception as e:
+        logger.error(f"Payment Confirmation Error: {str(e)}", exc_info=True)
+        return {'status': 'error', 'code': '99', 'message': 'Unknown Error'}
+
+
 # ==============================================================================
-# VIEW SETS
+# 2. THROTTLES & PERMISSIONS
 # ==============================================================================
 
 class PaymentCreateThrottle(UserRateThrottle):
-    """
-    Limit payment creation to prevent Ghost Payment DOS attacks.
-    Rate: 5 requests / hour
-    """
     scope = 'payment'
 
-
 class DiscountCheckThrottle(UserRateThrottle):
-    """
-    Limit discount code validation to prevent brute-force attacks.
-    Rate: 10 requests / hour
-    """
     rate = '10/hour'
 
+class IsAdminUser(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user and request.user.role == 'admin'
+
+
+# ==============================================================================
+# 3. VIEW SETS
+# ==============================================================================
 
 class PaymentViewSet(viewsets.ModelViewSet):
     """
@@ -128,7 +202,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_throttles(self):
-        """SECURITY FIX: Apply throttles to prevent abuse"""
         if self.action == 'create':
             return [PaymentCreateThrottle()]
         if self.action == 'apply_discount':
@@ -141,10 +214,26 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return Payment.objects.filter(user=self.request.user).select_related('course')
     
     def perform_create(self, serializer):
-        """Tạo payment, giữ chỗ discount và tạo URL thanh toán"""
+        """
+        Tạo payment, giữ chỗ discount và tạo URL thanh toán.
+        """
+        course = serializer.validated_data['course']
+        user = self.request.user
+        
+        # 1. SECURITY CHECK: Prevent payment if already enrolled
+        if Enrollment.objects.filter(
+            student=user,
+            course=course,
+            status__in=['active', 'completed']
+        ).exists():
+            raise ValidationError({
+                'course': 'You are already enrolled in this course.',
+                'message': 'Cannot create payment for a course you already have access to.'
+            })
+        
         discount = serializer.validated_data.get('discount')
         
-        # 1. Reserve discount slot (Flash Mob Attack Prevention)
+        # 2. Reserve discount slot
         if discount:
             updated = Discount.objects.filter(
                 id=discount.id,
@@ -152,89 +241,66 @@ class PaymentViewSet(viewsets.ModelViewSet):
             ).update(used_count=F('used_count') + 1)
             
             if not updated:
-                from rest_framework.exceptions import ValidationError
                 raise ValidationError({'discount': 'This discount code has reached its usage limit.'})
         
-        # 2. Calculate and save original_price and discount_amount
-        course = serializer.validated_data['course']
-        original_price = course.price
-        discount_amount = 0
+        # 3. Calculate Prices (DRY: Reusing helper function)
+        original_price, discount_amount, _ = calculate_payment_amounts(course, discount)
         
-        if discount:
-            if discount.discount_type == 'percentage':
-                discount_amount = (original_price * discount.discount_value) / 100
-                if discount.max_discount_amount:
-                    discount_amount = min(discount_amount, discount.max_discount_amount)
-            else:
-                discount_amount = discount.discount_value
+        # 4. Save payment
+        client_ip, _ = get_client_ip(self.request)
         
-        # 3. Save payment with snapshot values
         payment = serializer.save(
-            user=self.request.user,
+            user=user,
             status='pending',
             original_price=original_price,
             discount_amount=discount_amount,
-            ip_address=self.get_client_ip(),
+            ip_address=client_ip or '0.0.0.0',
             user_agent=self.request.META.get('HTTP_USER_AGENT', '')
         )
         
-        # 3. Generate VNPay URL
+        # 5. Generate VNPay URL
         if payment.payment_method == 'vnpay':
             payment_url = create_vnpay_payment_url(payment, self.request)
             payment.gateway_response = {'payment_url': payment_url}
             payment.save(update_fields=['gateway_response'])
     
-    def get_client_ip(self):
-        """SECURITY FIX: Use django-ipware for accurate IP detection behind proxies"""
-        from ipware import get_client_ip
-        client_ip, is_routable = get_client_ip(self.request)
-        return client_ip or '0.0.0.0'
-    
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """
         Hủy payment và hoàn trả discount slot.
-        
-        SECURITY FIX (Gemini Audit): Prevents "Discount Farming" via race condition.
-        Multiple concurrent cancel requests could cause used_count to become negative,
-        resurrecting expired discount codes.
+        Sử dụng Atomic Transaction để chống Race Condition.
         """
-        # CRITICAL: Use select_for_update() to lock row and prevent race condition
-        with transaction.atomic():
-            try:
-                # Lock the payment row immediately to prevent concurrent cancellations
-                payment = Payment.objects.select_for_update().get(
-                    pk=pk,
-                    user=request.user  # Ensure ownership within the lock
-                )
-            except Payment.DoesNotExist:
-                # Also handle admin permission
+        try:
+            with transaction.atomic():
+                # Lock row immediately
+                payment_qs = Payment.objects.select_for_update()
+                
                 if request.user.role == 'admin':
-                    try:
-                        payment = Payment.objects.select_for_update().get(pk=pk)
-                    except Payment.DoesNotExist:
-                        return Response({'error': 'Payment not found.'}, status=status.HTTP_404_NOT_FOUND)
+                    payment = get_object_or_404(payment_qs, pk=pk)
                 else:
-                    return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Check status within the locked transaction
-            if payment.status != 'pending':
-                return Response(
-                    {'error': 'Only pending payments can be cancelled.'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Update status
-            payment.status = 'cancelled'
-            payment.save(update_fields=['status'])
-            
-            # Refund discount slot (now safe from race condition)
-            if payment.discount:
-                Discount.objects.filter(id=payment.discount.id).update(
-                    used_count=F('used_count') - 1
-                )
-        
-        return Response({'status': 'success', 'message': 'Payment cancelled.'})
+                    payment = get_object_or_404(payment_qs, pk=pk, user=request.user)
+                
+                if payment.status != 'pending':
+                    return Response(
+                        {'error': 'Only pending payments can be cancelled.'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Update status
+                payment.status = 'cancelled'
+                payment.save(update_fields=['status'])
+                
+                # Refund discount slot
+                if payment.discount:
+                    Discount.objects.filter(id=payment.discount.id).update(
+                        used_count=F('used_count') - 1
+                    )
+                    
+            return Response({'status': 'success', 'message': 'Payment cancelled.'})
+
+        except Exception as e:
+            logger.error(f"Cancel Payment Error: {e}")
+            return Response({'error': 'System error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['post'])
     def apply_discount(self, request):
@@ -254,18 +320,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 'error': f'Minimum purchase amount is {discount.min_purchase_amount} VND'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Calculate final price
-        if discount.discount_type == 'percentage':
-            discount_amount = course.price * (discount.discount_value / 100)
-            if discount.max_discount_amount:
-                discount_amount = min(discount_amount, discount.max_discount_amount)
-        else:
-            discount_amount = discount.discount_value
-        
-        final_price = max(0, course.price - discount_amount)
+        # Calculate final price (DRY: Reusing helper function)
+        original_price, discount_amount, final_price = calculate_payment_amounts(course, discount)
         
         return Response({
-            'original_price': course.price,
+            'original_price': original_price,
             'discount_amount': discount_amount,
             'final_price': final_price,
             'discount_code': code
@@ -287,24 +346,19 @@ class DiscountViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
 
-class IsAdminUser(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return request.user and request.user.role == 'admin'
-
-
 # ==============================================================================
-# VNPAY HANDLERS
+# 4. VNPAY HANDLERS (Views)
 # ==============================================================================
 
 class VNPayReturnView(APIView):
     """
-    Handle Redirect from VNPay (Browser-based)
+    Handle Redirect from VNPay (Browser-based).
+    Redirects user to Frontend based on result.
     """
     permission_classes = [permissions.AllowAny]
     
     def get(self, request):
         vnpay_params = request.GET.dict()
-        
         if not vnpay_params:
             return redirect(f'{settings.FRONTEND_URL}/payment-error?error=no_params')
         
@@ -315,54 +369,24 @@ class VNPayReturnView(APIView):
             return redirect(f'{settings.FRONTEND_URL}/payment-error?error=invalid_signature')
         
         vnp_TxnRef = vnpay_params.get('vnp_TxnRef')
-        vnp_ResponseCode = vnpay_params.get('vnp_ResponseCode')
         
-        try:
-            with transaction.atomic():
-                # Lock row to prevent race condition with IPN
-                payment = Payment.objects.select_related('user', 'course', 'discount', 'vnpay_transaction')\
-                    .select_for_update().get(transaction_id=vnp_TxnRef)
-                
-                # Check Idempotency
-                if payment.status == 'completed':
-                    return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
-                
-                if payment.status == 'failed':
-                    return redirect(f'{settings.FRONTEND_URL}/payment-failed?error=already_failed')
-                
-                # SECURITY FIX: Prevent discount bypass via race condition
-                # If payment was cancelled (and discount slot refunded), reject processing
-                if payment.status == 'cancelled':
-                    return redirect(f'{settings.FRONTEND_URL}/payment-failed?error=payment_cancelled')
-                
-                # Check Amount (Integer comparison)
-                if int(payment.amount * 100) != int(vnpay_params.get('vnp_Amount', '0')):
-                    payment.status = 'failed'
-                    payment.save()
-                    return redirect(f'{settings.FRONTEND_URL}/payment-error?error=amount_mismatch')
-                
-                # Process Payment
-                success, created_enrollment, enrollment_id = process_payment_confirmation(payment, vnpay_params)
-                
-                if success:
-                    # Use transaction.on_commit to prevent Celery race condition
-                    # Tasks will only be sent after database transaction commits successfully
-                    transaction.on_commit(lambda: send_payment_success_email.delay(payment.id))
-                    if created_enrollment:
-                        transaction.on_commit(lambda eid=enrollment_id: send_enrollment_confirmation_email.delay(eid))
-                    
-                    return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
-                else:
-                    msg = get_vnpay_response_message(vnp_ResponseCode)
-                    return redirect(f'{settings.FRONTEND_URL}/payment-failed?error={msg}')
-                    
-        except Payment.DoesNotExist:
-            return redirect(f'{settings.FRONTEND_URL}/payment-error?error=payment_not_found')
+        # 2. Execute Payment Logic (Atomic & Locked)
+        result = execute_payment_confirmation(vnp_TxnRef, vnpay_params)
+        
+        # 3. Handle Redirects
+        if result['status'] == 'success':
+            return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
+        elif result['code'] == '00': 
+            # Trường hợp success nhưng idempotent check trả về success
+             return redirect(f'{settings.FRONTEND_URL}/payment-success?transaction_id={vnp_TxnRef}')
+        else:
+            return redirect(f'{settings.FRONTEND_URL}/payment-failed?error={result["message"]}')
 
 
 class VNPayIPNView(APIView):
     """
-    Handle IPN from VNPay (Server-to-Server)
+    Handle IPN from VNPay (Server-to-Server).
+    Returns JSON response code to VNPay.
     """
     permission_classes = [permissions.AllowAny]
     
@@ -376,34 +400,13 @@ class VNPayIPNView(APIView):
             return Response({'RspCode': '97', 'Message': 'Invalid Signature'})
         
         vnp_TxnRef = vnpay_params.get('vnp_TxnRef')
+
+        # 2. Execute Payment Logic (Atomic & Locked)
+        result = execute_payment_confirmation(vnp_TxnRef, vnpay_params)
         
-        try:
-            with transaction.atomic():
-                # Lock row
-                payment = Payment.objects.select_related('user', 'course', 'discount', 'vnpay_transaction')\
-                    .select_for_update().get(transaction_id=vnp_TxnRef)
-                
-                # Check Amount
-                if int(payment.amount * 100) != int(vnpay_params.get('vnp_Amount', '0')):
-                    return Response({'RspCode': '04', 'Message': 'Invalid Amount'})
-                
-                # Check Idempotency
-                if payment.status != 'pending':
-                    return Response({'RspCode': '02', 'Message': 'Order already confirmed'})
-                
-                # Process Payment
-                success, created_enrollment, enrollment_id = process_payment_confirmation(payment, vnpay_params)
-                
-                if success:
-                    # Use transaction.on_commit to prevent Celery race condition
-                    transaction.on_commit(lambda: send_payment_success_email.delay(payment.id))
-                    if created_enrollment:
-                        transaction.on_commit(lambda eid=enrollment_id: send_enrollment_confirmation_email.delay(eid))
-            
-            return Response({'RspCode': '00', 'Message': 'Confirm Success'})
-            
-        except Payment.DoesNotExist:
-            return Response({'RspCode': '01', 'Message': 'Order not found'})
-        except Exception as e:
-            logger.error(f"IPN Error: {str(e)}")
-            return Response({'RspCode': '99', 'Message': 'Unknown Error'})
+        # 3. Map internal result to VNPay Response
+        # RspCode: 00=Success, 01=Order Not Found, 02=Order Already Confirmed, 04=Invalid Amount, 99=Unknown
+        return Response({
+            'RspCode': result['code'],
+            'Message': result['message']
+        })

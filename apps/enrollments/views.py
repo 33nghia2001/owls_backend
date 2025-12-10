@@ -13,16 +13,37 @@ from apps.courses.models import Course, Lesson
 
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing course enrollments.
+    
+    SECURITY: Users can only view their own enrollments (list/retrieve).
+    CREATE is BLOCKED for regular users to prevent free enrollment bypass.
+    Only Admins can manually create enrollments (for special cases like refunds, gifts, etc.)
+    Normal enrollment flow: User pays via Payment API -> System creates Enrollment automatically.
+    """
     serializer_class = EnrollmentSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    # SECURITY FIX: Disable create/update/delete for non-admin users
+    http_method_names = ['get', 'post', 'head', 'options']  # Allow POST only for custom actions
 
     def get_queryset(self):
         """
-        Get enrollments for current user.
+        Get enrollments for current user (or all for admin).
         
         PERFORMANCE FIX: Use select_related to prevent N+1 queries when
         serializer accesses course.instructor and course.category.
         """
+        if self.request.user.is_staff:
+            # Admin can see all enrollments
+            return Enrollment.objects.all().select_related(
+                'course',
+                'course__instructor',
+                'course__category',
+                'student'
+            )
+        
+        # Regular users only see their own enrollments
         return Enrollment.objects.filter(student=self.request.user).select_related(
             'course',
             'course__instructor',  # Prevent N+1 for instructor_name in serializer
@@ -34,24 +55,36 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             return EnrollmentDetailSerializer
         return EnrollmentSerializer
 
-    def perform_create(self, serializer):
-        # Tự động gán student là user đang login
-        # Logic thực tế: Phải kiểm tra Payment trước khi tạo Enrollment (sẽ làm sau)
-        # Tạm thời cho phép đăng ký free để test
-        course = serializer.validated_data['course']
+    def create(self, request, *args, **kwargs):
+        """
+        SECURITY: Block public enrollment creation to prevent payment bypass.
         
-        # Kiểm tra xem đã đăng ký chưa - Chỉ chặn nếu đang active hoặc đã hoàn thành
-        if Enrollment.objects.filter(
-            student=self.request.user, 
-            course=course,
-            status__in=['active', 'completed']  # Chỉ chặn nếu đang học hoặc đã học xong
-        ).exists():
+        Enrollments are created automatically by the payment system when payment succeeds.
+        Only admins can manually create enrollments for special cases.
+        """
+        if not request.user.is_staff:
             return Response(
-                {'error': 'You are already active in this course'},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'error': 'Direct enrollment is not allowed',
+                    'message': 'Please complete payment via /api/v1/payments/ to enroll in a course',
+                    'detail': 'Enrollments are created automatically after successful payment'
+                },
+                status=status.HTTP_403_FORBIDDEN
             )
         
-        serializer.save(student=self.request.user)
+        # Admin can create enrollment manually (for special cases: refunds, gifts, etc.)
+        return super().create(request, *args, **kwargs)
+    
+    def perform_create(self, serializer):
+        """
+        Admin-only manual enrollment creation.
+        Auto-assigns student from request if not specified.
+        """
+        # If admin doesn't specify student, use current user
+        if 'student' not in serializer.validated_data:
+            serializer.save(student=self.request.user)
+        else:
+            serializer.save()
 
     @action(detail=True, methods=['post'])
     def mark_lesson_complete(self, request, pk=None):
