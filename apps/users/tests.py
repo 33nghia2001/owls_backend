@@ -11,13 +11,11 @@ class TestUserRegistration:
 
     def test_register_student_success(self, api_client):
         """Test successful student registration"""
-        url = reverse('register')
+        url = reverse('user-list')
         data = {
             'username': 'newstudent',
             'email': 'newstudent@test.com',
-            'password': 'SecurePass123!',
-            'password_confirm': 'SecurePass123!',
-            'role': 'student'
+            'password': 'SecurePass123!'
         }
         response = api_client.post(url, data, format='json')
         
@@ -25,34 +23,31 @@ class TestUserRegistration:
         assert User.objects.filter(username='newstudent').exists()
         user = User.objects.get(username='newstudent')
         assert user.email == 'newstudent@test.com'
-        assert user.role == 'student'
-        assert not user.email_verified
+        assert user.role == 'student'  # Always student by default
 
-    def test_register_instructor_success(self, api_client):
-        """Test successful instructor registration"""
-        url = reverse('register')
+    def test_register_always_creates_student(self, api_client):
+        """Test registration always creates student role (security fix)"""
+        url = reverse('user-list')
         data = {
             'username': 'newinstructor',
             'email': 'newinstructor@test.com',
             'password': 'SecurePass123!',
-            'password_confirm': 'SecurePass123!',
-            'role': 'instructor'
+            'role': 'instructor'  # Try to set instructor (should be ignored)
         }
         response = api_client.post(url, data, format='json')
         
         assert response.status_code == status.HTTP_201_CREATED
         user = User.objects.get(username='newinstructor')
-        assert user.role == 'instructor'
+        # SECURITY: Role should be 'student' regardless of input
+        assert user.role == 'student'
 
-    def test_register_password_mismatch(self, api_client):
-        """Test registration fails when passwords don't match"""
-        url = reverse('register')
+    def test_register_password_too_short(self, api_client):
+        """Test registration fails with short password"""
+        url = reverse('user-list')
         data = {
             'username': 'testuser',
             'email': 'test@test.com',
-            'password': 'SecurePass123!',
-            'password_confirm': 'DifferentPass123!',
-            'role': 'student'
+            'password': 'short'
         }
         response = api_client.post(url, data, format='json')
         
@@ -60,13 +55,11 @@ class TestUserRegistration:
 
     def test_register_duplicate_username(self, api_client, student_user):
         """Test registration fails with duplicate username"""
-        url = reverse('register')
+        url = reverse('user-list')
         data = {
             'username': student_user.username,
             'email': 'different@test.com',
-            'password': 'SecurePass123!',
-            'password_confirm': 'SecurePass123!',
-            'role': 'student'
+            'password': 'SecurePass123!'
         }
         response = api_client.post(url, data, format='json')
         
@@ -74,13 +67,11 @@ class TestUserRegistration:
 
     def test_register_duplicate_email(self, api_client, student_user):
         """Test registration fails with duplicate email"""
-        url = reverse('register')
+        url = reverse('user-list')
         data = {
             'username': 'differentuser',
             'email': student_user.email,
-            'password': 'SecurePass123!',
-            'password_confirm': 'SecurePass123!',
-            'role': 'student'
+            'password': 'SecurePass123!'
         }
         response = api_client.post(url, data, format='json')
         

@@ -6,38 +6,33 @@ from rest_framework.routers import DefaultRouter
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 # Import ViewSets
-from apps.users.views import UserViewSet
 from apps.courses.views import CourseViewSet, CategoryViewSet, LessonViewSet
-from apps.enrollments.views import EnrollmentViewSet, LessonProgressViewSet, QuizAttemptViewSet
 from apps.reviews.views import ReviewViewSet, InstructorReplyViewSet
-from apps.payments.views import PaymentViewSet, DiscountViewSet, VNPayReturnView, VNPayIPNView
+from apps.payments.views import VNPayReturnView, VNPayIPNView
 
-# Setup Router
+# Setup Main Router (courses and reviews only - users/enrollments/payments have their own)
 router = DefaultRouter()
-router.register(r'users', UserViewSet)
 router.register(r'courses', CourseViewSet)
 router.register(r'categories', CategoryViewSet)
 router.register(r'lessons', LessonViewSet, basename='lesson')
-router.register(r'enrollments', EnrollmentViewSet, basename='enrollment')
-router.register(r'lesson-progress', LessonProgressViewSet, basename='lesson-progress')
-router.register(r'quiz-attempts', QuizAttemptViewSet, basename='quiz-attempt')
 router.register(r'reviews', ReviewViewSet, basename='review')
 router.register(r'instructor-replies', InstructorReplyViewSet, basename='instructor-reply')
-router.register(r'payments', PaymentViewSet, basename='payment')
-router.register(r'discounts', DiscountViewSet, basename='discount')
 
 urlpatterns = [
     # Secure Admin URL - Changed from default /admin/ to prevent brute-force attacks
     path('quan-tri-vien-secure-8899/', admin.site.urls),
+    
+    # Main API Routes (courses, categories, lessons, reviews)
     path('api/v1/', include(router.urls)),
     
-    # VNPay Callbacks
+    # App-specific Routes (with their own routers)
+    path('api/v1/', include('apps.users.urls')),  # /api/v1/users/, /api/v1/login/, etc.
+    path('api/v1/', include('apps.enrollments.urls')),  # /api/v1/enrollments/
+    path('api/v1/', include('apps.payments.urls')),  # /api/v1/payments/
+    
+    # VNPay Callbacks (special non-REST endpoints)
     path('api/v1/payments/vnpay/return/', VNPayReturnView.as_view(), name='vnpay-return'),
     path('api/v1/payments/vnpay/ipn/', VNPayIPNView.as_view(), name='vnpay-ipn'),
-    
-    # Authentication URLs (Login/Refresh)
-    path('api/v1/auth/', include('rest_framework.urls')), # Basic auth login/logout
-    path('api/v1/token/', include('apps.users.urls')), # JWT authentication
     
     # Notifications & WebSocket
     path('api/v1/notifications/', include('apps.notifications.urls')),
