@@ -31,10 +31,14 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         # Tạm thời cho phép đăng ký free để test
         course = serializer.validated_data['course']
         
-        # Kiểm tra xem đã đăng ký chưa
-        if Enrollment.objects.filter(student=self.request.user, course=course).exists():
+        # Kiểm tra xem đã đăng ký chưa - Chỉ chặn nếu đang active hoặc đã hoàn thành
+        if Enrollment.objects.filter(
+            student=self.request.user, 
+            course=course,
+            status__in=['active', 'completed']  # Chỉ chặn nếu đang học hoặc đã học xong
+        ).exists():
             return Response(
-                {'error': 'You are already enrolled in this course'},
+                {'error': 'You are already active in this course'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -50,6 +54,13 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             return Response({'error': 'lesson_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         lesson = get_object_or_404(Lesson, id=lesson_id)
+        
+        # Kiểm tra xem bài học này có thuộc khóa học đang enroll không
+        if lesson.section.course_id != enrollment.course_id:
+            return Response(
+                {'error': 'This lesson does not belong to the enrolled course'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Tạo hoặc cập nhật lesson progress
         progress, created = LessonProgress.objects.get_or_create(
