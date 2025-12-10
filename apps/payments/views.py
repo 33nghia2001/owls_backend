@@ -296,10 +296,28 @@ class PaymentViewSet(viewsets.ModelViewSet):
             return
         
         # 7. Generate VNPay URL (Only for paid courses)
-        if payment.payment_method == 'vnpay':
-            payment_url = create_vnpay_payment_url(payment, self.request)
-            payment.gateway_response = {'payment_url': payment_url}
-            payment.save(update_fields=['gateway_response'])
+        # BUSINESS LOGIC FIX: Validate payment method for paid courses
+        if final_price > 0:
+            # Ensure valid payment method for paid courses
+            valid_methods = ['vnpay', 'momo', 'credit_card', 'bank_transfer']
+            if payment.payment_method not in valid_methods:
+                # Force default payment method if invalid
+                logger.warning(
+                    f"Invalid payment method '{payment.payment_method}' for paid course. "
+                    f"Forcing to 'vnpay'. User: {user.id}, Course: {course.id}"
+                )
+                payment.payment_method = 'vnpay'
+                payment.save(update_fields=['payment_method'])
+            
+            # Generate payment URL based on method
+            if payment.payment_method == 'vnpay':
+                payment_url = create_vnpay_payment_url(payment, self.request)
+                payment.gateway_response = {'payment_url': payment_url}
+                payment.save(update_fields=['gateway_response'])
+            # TODO: Add other payment gateways (momo, credit_card, etc.)
+        else:
+            # Sanity check: Should never reach here due to earlier free course handling
+            logger.error(f"Unexpected state: final_price=0 but reached payment URL generation")
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):

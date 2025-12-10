@@ -89,20 +89,43 @@ class LessonProgress(models.Model):
         return f"{self.enrollment.student.username} - {self.lesson.title}"
     
     def mark_as_completed(self):
-        """Mark lesson as completed"""
+        """Mark lesson as completed and auto-complete enrollment if 100% done"""
         from django.utils import timezone
+        from django.db import transaction
+        
         if not self.is_completed:
             self.is_completed = True
             self.completed_at = timezone.now()
             self.save()
             
             # Update enrollment progress
-            self.enrollment.completed_lessons_count += 1
-            total_lessons = self.enrollment.course.sections.aggregate(
+            enrollment = self.enrollment
+            enrollment.completed_lessons_count += 1
+            
+            # Calculate progress percentage
+            total_lessons = enrollment.course.sections.aggregate(
                 total=models.Count('lessons')
             )['total'] or 1
-            self.enrollment.progress_percentage = (self.enrollment.completed_lessons_count / total_lessons) * 100
-            self.enrollment.save()
+            enrollment.progress_percentage = (enrollment.completed_lessons_count / total_lessons) * 100
+            
+            # BUSINESS LOGIC FIX: Auto-complete enrollment when 100% done
+            if enrollment.progress_percentage >= 100 and enrollment.status == 'active':
+                enrollment.mark_as_completed()
+                
+                # Trigger certificate generation (async)
+                transaction.on_commit(
+                    lambda: self._trigger_certificate_generation(enrollment.id)
+                )
+            else:
+                enrollment.save()
+    
+    def _trigger_certificate_generation(self, enrollment_id):
+        """Helper to trigger certificate generation task"""
+        try:
+            from apps.payments.tasks import generate_course_certificate
+            generate_course_certificate.delay(enrollment_id)
+        except ImportError:
+            pass  # Task app not available
 
 
 class QuizAttempt(models.Model):

@@ -22,10 +22,16 @@ class ResourceSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'file_url', 'file_size']
     
     def get_file_url(self, obj):
-        """Return signed URL with 24-hour expiration for security"""
+        """
+        Return signed URL with 15-minute expiration for security.
+        
+        SECURITY FIX: Reduced from 24 hours to 15 minutes to prevent
+        time-based IDOR attacks where users share download links.
+        15 minutes is sufficient for user to click and download.
+        """
         if obj.file:
             # Extract public_id from Cloudinary field
-            return generate_signed_resource_url(obj.file.public_id, duration_hours=24)
+            return generate_signed_resource_url(obj.file.public_id, duration_hours=0.25)  # 15 minutes
         return obj.file_url  # Fallback to regular URL if exists
 
 

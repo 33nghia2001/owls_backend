@@ -170,8 +170,19 @@ def send_payment_success_email(self, payment_id: int):
 def send_certificate_email(self, enrollment_id: int, certificate_path: str):
     """
     Send course completion certificate to student via email with PDF attachment.
+    
+    SECURITY FIX: Validates certificate_path to prevent LFI/Path Traversal attacks.
+    Only allows files within 'certificates/' directory.
     """
     from apps.enrollments.models import Enrollment
+    
+    # SECURITY CHECK: Prevent path traversal attacks
+    if not certificate_path.startswith('certificates/') or '..' in certificate_path:
+        logger.critical(
+            f"SECURITY ALERT: Path traversal attempt in send_certificate_email. "
+            f"Path: {certificate_path}, Enrollment: {enrollment_id}"
+        )
+        return  # Silently fail - do not process malicious paths
     
     try:
         enrollment = Enrollment.objects.select_related('student', 'course').get(id=enrollment_id)
@@ -232,10 +243,13 @@ def send_certificate_email(self, enrollment_id: int, certificate_path: str):
         raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=3, rate_limit='5/m')
 def generate_course_certificate(self, enrollment_id: int):
     """
     Generate PDF certificate for completed course using ReportLab.
+    
+    SECURITY: Rate limited to 5/minute to prevent DoS attacks.
+    PDF generation is CPU/memory intensive and could overwhelm workers.
     """
     from apps.enrollments.models import Enrollment
     # ReportLab imports (moved inside to save memory if task not used)
@@ -320,40 +334,49 @@ def generate_course_certificate(self, enrollment_id: int):
 def cleanup_expired_payments():
     """
     Periodic task to clean up expired pending payments.
-    OPTIMIZATION: Uses aggregation to bulk update discount counts instead of looping.
+    
+    SECURITY FIX: Use select_for_update(skip_locked=True) to prevent race conditions
+    where a payment completes via IPN while being expired by this task.
+    The "Double Refund Bug" is prevented by locking rows before processing.
     """
     from apps.payments.models import Payment, Discount
     
     cutoff_time = timezone.now() - timedelta(minutes=10)
     
-    # 1. Find expired payments
-    expired_qs = Payment.objects.filter(
-        status='pending',
-        created_at__lt=cutoff_time
-    )
-    
-    if not expired_qs.exists():
-        return 0
-
-    # 2. OPTIMIZATION: Aggregate discount usage to refund
-    # Count how many times each discount was used in these expired payments
-    discount_refunds = expired_qs.filter(discount__isnull=False).values('discount').annotate(
-        refund_count=Count('id')
-    )
-    
-    # 3. Bulk update discounts (Refund slots)
     with transaction.atomic():
-        for item in discount_refunds:
-            discount_id = item['discount']
-            count = item['refund_count']
-            # Atomic decrement
+        # 1. Lock rows that are candidates for expiration
+        # skip_locked=True: Skip payments currently being processed by IPN
+        expired_payments = list(
+            Payment.objects.filter(
+                status='pending',
+                created_at__lt=cutoff_time
+            ).select_for_update(skip_locked=True)
+            .select_related('discount')
+            .only('id', 'discount')
+        )
+        
+        if not expired_payments:
+            return 0
+
+        # 2. Calculate refunds in memory (Safe now because rows are locked)
+        discount_refund_map = {}
+        payment_ids = []
+        
+        for payment in expired_payments:
+            payment_ids.append(payment.id)
+            if payment.discount:
+                discount_id = payment.discount.id
+                discount_refund_map[discount_id] = discount_refund_map.get(discount_id, 0) + 1
+        
+        # 3. Bulk update discounts (Atomic decrement)
+        for discount_id, count in discount_refund_map.items():
             Discount.objects.filter(id=discount_id).update(
                 used_count=F('used_count') - count
             )
             logger.info(f"Refunded {count} slots for discount ID {discount_id}")
 
-        # 4. Bulk update payment status
-        updated_count = expired_qs.update(status='expired')
+        # 4. Bulk update payments (Only locked rows)
+        updated_count = Payment.objects.filter(id__in=payment_ids).update(status='expired')
     
     logger.info(f'Cleaned up {updated_count} expired payments')
     return updated_count
