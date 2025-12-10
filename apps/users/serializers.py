@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from turnstile.fields import TurnstileField
 from .models import InstructorProfile
 
 User = get_user_model()
@@ -20,13 +21,16 @@ class UserSerializer(serializers.ModelSerializer):
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
+    turnstile = TurnstileField()  # Cloudflare Turnstile CAPTCHA
 
     class Meta:
         model = User
         # Xóa 'role' khỏi fields để user không tự gửi lên được
-        fields = ['username', 'email', 'password', 'first_name', 'last_name']
+        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'turnstile']
     
     def create(self, validated_data):
+        # Remove turnstile from validated_data before creating user
+        validated_data.pop('turnstile', None)
         # Mặc định luôn set role là 'student' khi đăng ký qua API này
         validated_data['role'] = 'student'
         user = User.objects.create_user(**validated_data)

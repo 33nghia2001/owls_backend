@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from turnstile.fields import TurnstileField
 from .models import Payment, VNPayTransaction, Discount
 from apps.courses.models import Course
 
@@ -12,13 +13,14 @@ class PaymentSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True)
     discount_code = serializers.CharField(source='discount.code', read_only=True)
     payment_url = serializers.SerializerMethodField()
+    turnstile = TurnstileField()  # Cloudflare Turnstile CAPTCHA
     
     class Meta:
         model = Payment
         fields = [
             'id', 'transaction_id', 'user', 'user_name', 'course', 'course_title',
             'amount', 'currency', 'payment_method', 'status', 'discount', 'discount_code',
-            'gateway_transaction_id', 'description', 'payment_url',
+            'gateway_transaction_id', 'description', 'payment_url', 'turnstile',
             'created_at', 'paid_at'
         ]
         read_only_fields = [
@@ -116,6 +118,9 @@ class PaymentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'amount': f'Amount must be {expected_amount} VND'
                 })
+        
+        # Remove turnstile from validated_data (chỉ dùng để verify, không lưu vào DB)
+        data.pop('turnstile', None)
         
         return data
 

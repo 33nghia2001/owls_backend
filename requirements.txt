@@ -20,6 +20,12 @@ cloudinary>=1.36.0
 # Static Files
 whitenoise>=6.6.0
 
+# CAPTCHA Protection
+django-turnstile>=0.2.1  # Cloudflare Turnstile
+
+# HTML Sanitization
+bleach>=6.0.0  # XSS protection
+
 # Utilities
 requests>=2.31.0  # For API calls
 python-dateutil>=2.8.2

@@ -48,6 +48,7 @@ THIRD_PARTY_APPS = [
     'drf_spectacular',
     'cloudinary_storage',
     'cloudinary',
+    'turnstile',
 ]
 
 LOCAL_APPS = [
@@ -218,7 +219,15 @@ VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default='http://localhost:8000/api/pa
 VNPAY_API_URL = env('VNPAY_API_URL', default='https://sandbox.vnpayment.vn/merchant_webapi/api/transaction')
 
 
-# 13. Security (Production)
+# 13. Cloudflare Turnstile Configuration
+# ------------------------------------------------------------------------------
+TURNSTILE_SITEKEY = env('TURNSTILE_SITEKEY', default='')
+TURNSTILE_SECRET = env('TURNSTILE_SECRET', default='')
+# Nếu không muốn verify CAPTCHA trong test mode (chỉ dùng local development)
+TURNSTILE_TEST_MODE = env.bool('TURNSTILE_TEST_MODE', default=DEBUG)
+
+
+# 14. Security (Production)
 # ------------------------------------------------------------------------------
 if not DEBUG:
     # Bật các tính năng bảo mật khi deploy

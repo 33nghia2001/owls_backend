@@ -2,14 +2,21 @@ from rest_framework import serializers
 from .models import Review, ReviewHelpful, InstructorReply, ReportReview
 from apps.courses.serializers import CourseListSerializer
 from apps.users.serializers import PublicUserSerializer
+# Lưu ý: Cần import Enrollment model bên trong method để tránh Circular Import, 
+# hoặc nếu không bị vòng lặp thì import ở đây. Trong code dưới tôi để trong method cho an toàn.
 import bleach
 
 
 def sanitize_html(text):
-    """Remove all HTML tags except safe ones"""
-    allowed_tags = []  # No HTML tags allowed
+    """
+    Remove all HTML tags except safe ones.
+    Prevents XSS attacks by stripping dangerous tags and attributes.
+    """
+    allowed_tags = []  # No HTML tags allowed (Plain text only)
     allowed_attrs = {}
-    return bleach.clean(text, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+    if text:
+        return bleach.clean(text, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+    return text
 
 
 class InstructorReplySerializer(serializers.ModelSerializer):
@@ -25,7 +32,8 @@ class ReviewSerializer(serializers.ModelSerializer):
     user = PublicUserSerializer(read_only=True)  # Ẩn email/phone của reviewer
     user_avatar = serializers.SerializerMethodField()
     instructor_reply = InstructorReplySerializer(read_only=True)
-    comment = serializers.CharField(max_length=5000)  # Giới hạn 5000 ký tự
+    # Giới hạn 5000 ký tự để tránh spam/DoS database
+    comment = serializers.CharField(max_length=5000)
     
     class Meta:
         model = Review
@@ -46,9 +54,7 @@ class ReviewSerializer(serializers.ModelSerializer):
     
     def validate_title(self, value):
         """Sanitize title to prevent XSS attacks"""
-        if value:
-            return sanitize_html(value)
-        return value
+        return sanitize_html(value)
     
     def validate_rating(self, value):
         """Validate rating is between 1 and 5"""
@@ -58,29 +64,32 @@ class ReviewSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """
-        Kiểm tra user đã đăng ký và hoàn thành khóa học chưa.
-        Chỉ cho phép review nếu đã học (enrollment completed hoặc active với progress > 0).
+        Kiểm tra logic nghiệp vụ:
+        1. User phải enrolled (active/completed).
+        2. User chỉ được review 1 lần cho mỗi khóa học.
         """
         request = self.context.get('request')
         course = data.get('course')
         
+        # Chỉ thực hiện validate nếu có request (để lấy user) và course
         if request and course:
-            # Kiểm tra enrollment
             from apps.enrollments.models import Enrollment
             
-            enrollment = Enrollment.objects.filter(
+            # 1. Kiểm tra enrollment
+            # Tối ưu: Dùng .exists() nhanh hơn .first() nếu chỉ cần kiểm tra tồn tại
+            has_enrollment = Enrollment.objects.filter(
                 student=request.user,
                 course=course,
                 status__in=['active', 'completed']
-            ).first()
+            ).exists()
             
-            if not enrollment:
+            if not has_enrollment:
                 raise serializers.ValidationError(
                     "You must be enrolled in this course to leave a review."
                 )
             
-            # Kiểm tra đã review chưa (chỉ cho review 1 lần)
-            if self.instance is None:  # Chỉ check khi tạo mới, không check khi update
+            # 2. Kiểm tra duplicate review (Chỉ check khi tạo mới - self.instance is None)
+            if self.instance is None:
                 if Review.objects.filter(user=request.user, course=course).exists():
                     raise serializers.ValidationError(
                         "You have already reviewed this course."
@@ -109,6 +118,7 @@ class ReportReviewSerializer(serializers.ModelSerializer):
         review = data.get('review')
         
         if request and review:
+            # Tối ưu: Dùng .exists()
             if ReportReview.objects.filter(reported_by=request.user, review=review).exists():
                 raise serializers.ValidationError(
                     "You have already reported this review."
