@@ -176,58 +176,160 @@ def get_vnpay_response_message(code):
     return VNPAY_RESPONSE_CODES.get(code, 'Lỗi không xác định')
 
 
-def process_vnpay_refund(transaction_id, amount):
+def process_vnpay_refund(transaction_id, amount, refund_reason='Customer request'):
     """
-    Process VNPay refund request.
+    Process VNPay refund request via official VNPay Refund API.
     
     SECURITY FIX: Implements actual VNPay refund API call to prevent 'Zombie Refunds'.
     This ensures money is actually returned to customer, not just marked as refunded in DB.
     
     Args:
-        transaction_id: Payment transaction UUID
-        amount: Refund amount in VND
+        transaction_id: Payment transaction UUID (vnp_TxnRef)
+        amount: Refund amount in VND (Decimal)
+        refund_reason: Reason for refund (optional)
     
     Returns:
         dict: {
             'success': bool,
             'message': str,
             'transaction_no': str (if success),
+            'response_code': str,
             'error': str (if failed)
         }
     
-    TODO: Implement actual VNPay refund API integration
+    Implementation based on VNPay Refund API v2.1.0
     Docs: https://sandbox.vnpayment.vn/apis/docs/hoan-tien/
-    
-    For now, this is a placeholder that logs the refund request.
-    In production, you need to:
-    1. Call VNPay refund API endpoint
-    2. Pass merchant credentials and transaction details
-    3. Verify refund response signature
-    4. Update payment status based on response
     """
+    import requests
     import logging
+    from .models import Payment, VNPayTransaction
+    
     logger = logging.getLogger(__name__)
     
-    logger.warning(
-        f"VNPay refund requested: transaction_id={transaction_id}, amount={amount}. "
-        f"IMPLEMENT ACTUAL API CALL IN PRODUCTION!"
-    )
-    
-    # PLACEHOLDER: In production, replace with actual VNPay API call
-    # Example pseudo-code:
-    # response = requests.post(
-    #     settings.VNPAY_REFUND_URL,
-    #     data={
-    #         'vnp_TmnCode': settings.VNPAY_TMN_CODE,
-    #         'vnp_TxnRef': transaction_id,
-    #         'vnp_Amount': int(amount * 100),
-    #         'vnp_TransactionType': '02',  # Full refund
-    #         # ... other required fields
-    #     }
-    # )
-    
-    return {
-        'success': False,
-        'error': 'VNPay refund API not implemented yet. Manual processing required.',
-        'message': 'Please process this refund manually through VNPay merchant portal.'
-    }
+    try:
+        # 1. Get payment and original transaction info
+        payment = Payment.objects.select_related('vnpay_transaction').get(
+            transaction_id=transaction_id
+        )
+        vnpay_transaction = payment.vnpay_transaction
+        
+        if not vnpay_transaction or not vnpay_transaction.vnp_TransactionNo:
+            return {
+                'success': False,
+                'error': 'Original VNPay transaction not found or incomplete',
+                'message': 'Cannot process refund without valid VNPay transaction reference'
+            }
+        
+        # 2. Build refund request data
+        vnpay = VNPay()
+        create_date = datetime.now().strftime('%Y%m%d%H%M%S')
+        
+        # VNPay requires amount in smallest currency unit (VND * 100)
+        refund_amount = int(amount * 100)
+        
+        vnpay.request_data = {
+            'vnp_Version': '2.1.0',
+            'vnp_Command': 'refund',
+            'vnp_TmnCode': settings.VNPAY_TMN_CODE,
+            'vnp_TransactionType': '02',  # 02: Full refund, 03: Partial refund
+            'vnp_TxnRef': str(transaction_id),  # Original transaction reference
+            'vnp_Amount': refund_amount,
+            'vnp_OrderInfo': f'Hoan tien: {refund_reason}',
+            'vnp_TransactionNo': vnpay_transaction.vnp_TransactionNo,  # VNPay's transaction ID
+            'vnp_TransactionDate': vnpay_transaction.created_at.strftime('%Y%m%d%H%M%S'),
+            'vnp_CreateDate': create_date,
+            'vnp_CreateBy': 'admin',  # User who initiated refund
+            'vnp_IpAddr': '127.0.0.1',  # Server IP
+        }
+        
+        # 3. Generate secure hash
+        input_data = sorted(vnpay.request_data.items())
+        hash_data = '&'.join([f"{key}={urllib.parse.quote_plus(str(val))}" for key, val in input_data])
+        
+        secure_hash = hmac.new(
+            settings.VNPAY_HASH_SECRET.encode('utf-8'),
+            hash_data.encode('utf-8'),
+            hashlib.sha512
+        ).hexdigest()
+        
+        vnpay.request_data['vnp_SecureHash'] = secure_hash
+        
+        # 4. Call VNPay Refund API
+        refund_url = settings.VNPAY_REFUND_URL if hasattr(settings, 'VNPAY_REFUND_URL') else \
+                     'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction'
+        
+        logger.info(f"Calling VNPay refund API for transaction {transaction_id}, amount {amount}")
+        
+        response = requests.post(
+            refund_url,
+            json=vnpay.request_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        response_data = response.json()
+        
+        # 5. Validate response signature
+        vnp_secure_hash = response_data.pop('vnp_SecureHash', None)
+        response_hash_data = '&'.join([
+            f"{key}={urllib.parse.quote_plus(str(val))}" 
+            for key, val in sorted(response_data.items())
+        ])
+        
+        expected_hash = hmac.new(
+            settings.VNPAY_HASH_SECRET.encode('utf-8'),
+            response_hash_data.encode('utf-8'),
+            hashlib.sha512
+        ).hexdigest()
+        
+        if vnp_secure_hash != expected_hash:
+            logger.error(f"VNPay refund response signature mismatch for {transaction_id}")
+            return {
+                'success': False,
+                'error': 'Invalid response signature from VNPay',
+                'message': 'Security validation failed'
+            }
+        
+        # 6. Process response
+        response_code = response_data.get('vnp_ResponseCode')
+        
+        if response_code == '00':
+            logger.info(f"VNPay refund successful for {transaction_id}")
+            return {
+                'success': True,
+                'message': 'Refund processed successfully',
+                'transaction_no': response_data.get('vnp_TransactionNo'),
+                'response_code': response_code,
+                'response_data': response_data
+            }
+        else:
+            error_message = get_vnpay_response_message(response_code)
+            logger.warning(f"VNPay refund failed for {transaction_id}: {error_message}")
+            return {
+                'success': False,
+                'error': error_message,
+                'response_code': response_code,
+                'message': f'VNPay rejected refund: {error_message}'
+            }
+            
+    except Payment.DoesNotExist:
+        logger.error(f"Payment not found: {transaction_id}")
+        return {
+            'success': False,
+            'error': 'Payment not found',
+            'message': f'No payment found with transaction ID: {transaction_id}'
+        }
+    except requests.RequestException as e:
+        logger.error(f"VNPay API request failed: {str(e)}")
+        return {
+            'success': False,
+            'error': f'Network error: {str(e)}',
+            'message': 'Failed to connect to VNPay refund API'
+        }
+    except Exception as e:
+        logger.exception(f"Unexpected error processing VNPay refund: {str(e)}")
+        return {
+            'success': False,
+            'error': f'System error: {str(e)}',
+            'message': 'An unexpected error occurred during refund processing'
+        }

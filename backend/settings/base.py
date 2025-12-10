@@ -260,11 +260,13 @@ SPECTACULAR_SETTINGS = {
     'COMPONENT_SPLIT_REQUEST': True,
 }
 
-# VNPay
+# VNPay Payment Gateway
 VNPAY_TMN_CODE = env('VNPAY_TMN_CODE', default='')
 VNPAY_HASH_SECRET = env('VNPAY_HASH_SECRET', default='')
 VNPAY_PAYMENT_URL = env('VNPAY_PAYMENT_URL', default='https://sandbox.vnpayment.vn/paymentv2/vpcpay.html')
 VNPAY_API_URL = env('VNPAY_API_URL', default='https://sandbox.vnpayment.vn/merchant_webapi/api/transaction')
+# Refund API endpoint (same as API_URL in VNPay v2.1.0)
+VNPAY_REFUND_URL = env('VNPAY_REFUND_URL', default='https://sandbox.vnpayment.vn/merchant_webapi/api/transaction')
 # Logic VNPAY_RETURN_URL sẽ được xử lý ở production.py/local.py để an toàn hơn
 
 # Turnstile
