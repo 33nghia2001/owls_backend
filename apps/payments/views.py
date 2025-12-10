@@ -185,8 +185,10 @@ class PaymentViewSet(viewsets.ModelViewSet):
             payment.save(update_fields=['gateway_response'])
     
     def get_client_ip(self):
-        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
-        return x_forwarded_for.split(',')[0] if x_forwarded_for else self.request.META.get('REMOTE_ADDR')
+        """SECURITY FIX: Use django-ipware for accurate IP detection behind proxies"""
+        from ipware import get_client_ip
+        client_ip, is_routable = get_client_ip(self.request)
+        return client_ip or '0.0.0.0'
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):

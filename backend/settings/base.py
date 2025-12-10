@@ -176,6 +176,28 @@ FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
 # Backend URL (for OAuth redirects - prevent Host Header Injection)
 BACKEND_URL = env('BACKEND_URL', default='http://localhost:8000')
 
+# 10.5. IP Address Detection (for rate limiting behind proxies/CDN)
+# SECURITY FIX: Configure trusted proxies to prevent IP spoofing
+# Used by django-ipware for accurate client IP detection
+IPWARE_META_PRECEDENCE_ORDER = (
+    'HTTP_X_FORWARDED_FOR',  # Standard proxy header
+    'X_FORWARDED_FOR',
+    'HTTP_CLIENT_IP',
+    'HTTP_X_REAL_IP',
+    'HTTP_X_FORWARDED',
+    'HTTP_X_CLUSTER_CLIENT_IP',
+    'HTTP_FORWARDED_FOR',
+    'HTTP_FORWARDED',
+    'REMOTE_ADDR',  # Fallback to direct connection IP
+)
+
+# Only trust proxy headers if behind a known proxy (Cloudflare, Nginx, etc.)
+# In production, set IPWARE_TRUSTED_PROXY_LIST in environment variables
+IPWARE_TRUSTED_PROXY_LIST = env.list('IPWARE_TRUSTED_PROXY_LIST', default=[])
+
+# For Cloudflare, you would set in .env:
+# IPWARE_TRUSTED_PROXY_LIST=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,etc.
+
 # 11. Redis & Celery & Channels
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
 

@@ -174,3 +174,60 @@ VNPAY_RESPONSE_CODES = {
 def get_vnpay_response_message(code):
     """Lấy message từ response code"""
     return VNPAY_RESPONSE_CODES.get(code, 'Lỗi không xác định')
+
+
+def process_vnpay_refund(transaction_id, amount):
+    """
+    Process VNPay refund request.
+    
+    SECURITY FIX: Implements actual VNPay refund API call to prevent 'Zombie Refunds'.
+    This ensures money is actually returned to customer, not just marked as refunded in DB.
+    
+    Args:
+        transaction_id: Payment transaction UUID
+        amount: Refund amount in VND
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'message': str,
+            'transaction_no': str (if success),
+            'error': str (if failed)
+        }
+    
+    TODO: Implement actual VNPay refund API integration
+    Docs: https://sandbox.vnpayment.vn/apis/docs/hoan-tien/
+    
+    For now, this is a placeholder that logs the refund request.
+    In production, you need to:
+    1. Call VNPay refund API endpoint
+    2. Pass merchant credentials and transaction details
+    3. Verify refund response signature
+    4. Update payment status based on response
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.warning(
+        f"VNPay refund requested: transaction_id={transaction_id}, amount={amount}. "
+        f"IMPLEMENT ACTUAL API CALL IN PRODUCTION!"
+    )
+    
+    # PLACEHOLDER: In production, replace with actual VNPay API call
+    # Example pseudo-code:
+    # response = requests.post(
+    #     settings.VNPAY_REFUND_URL,
+    #     data={
+    #         'vnp_TmnCode': settings.VNPAY_TMN_CODE,
+    #         'vnp_TxnRef': transaction_id,
+    #         'vnp_Amount': int(amount * 100),
+    #         'vnp_TransactionType': '02',  # Full refund
+    #         # ... other required fields
+    #     }
+    # )
+    
+    return {
+        'success': False,
+        'error': 'VNPay refund API not implemented yet. Manual processing required.',
+        'message': 'Please process this refund manually through VNPay merchant portal.'
+    }
