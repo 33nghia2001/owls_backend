@@ -55,22 +55,38 @@ def generate_signed_video_url(public_id, duration_hours=None, streaming_format='
     return signed_url
 
 
-def generate_video_thumbnail(public_id):
+def generate_video_thumbnail(public_id, duration_hours=24):
     """
-    Generate video thumbnail from first frame.
-    Used for video preview images.
+    Generate video thumbnail from first frame with security.
+    
+    SECURITY FIX: Signs thumbnail URLs for private videos to prevent privacy leaks.
+    If the video is set to 'authenticated' type, thumbnails must also be signed.
+    
+    Args:
+        public_id: Cloudinary public_id of the video
+        duration_hours: URL expiration time in hours (default: 24 hours)
+    
+    Returns:
+        Signed thumbnail URL (JPG) with expiration
     """
     if not public_id:
         return None
     
+    # Calculate expiration timestamp
+    expires_at = int((timezone.now() + timedelta(hours=duration_hours)).timestamp())
+    
+    # SECURITY: Sign thumbnail URL for private videos
     return cloudinary.utils.cloudinary_url(
         public_id,
         resource_type='video',
+        type='authenticated',  # SECURITY: Match video type for private content
+        sign_url=True,         # SECURITY: Prevent unauthorized access
         format='jpg',
         transformation=[
             {'width': 1280, 'height': 720, 'crop': 'fill'},
             {'start_offset': '0'}  # First frame
         ],
+        expires_at=expires_at,
         secure=True
     )[0]
 

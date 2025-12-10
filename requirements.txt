@@ -41,6 +41,9 @@ channels>=4.0.0  # Django Channels for WebSockets
 channels-redis>=4.1.0  # Redis channel layer
 daphne>=4.0.0  # ASGI server for Channels
 
+# File Upload Security
+python-magic-bin>=0.4.14  # Windows-compatible magic bytes detection for file validation
+
 # Utilities
 requests>=2.31.0  # For API calls
 python-dateutil>=2.8.2

@@ -17,8 +17,17 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Học viên chỉ thấy khóa học mình đã đăng ký
-        return Enrollment.objects.filter(student=self.request.user).select_related('course')
+        """
+        Get enrollments for current user.
+        
+        PERFORMANCE FIX: Use select_related to prevent N+1 queries when
+        serializer accesses course.instructor and course.category.
+        """
+        return Enrollment.objects.filter(student=self.request.user).select_related(
+            'course',
+            'course__instructor',  # Prevent N+1 for instructor_name in serializer
+            'course__category'      # Prevent N+1 for category_name in serializer
+        )
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
