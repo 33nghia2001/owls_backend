@@ -8,6 +8,7 @@ from django.db.models import Q
 
 from .models import Conversation, Message
 from apps.vendors.models import Vendor
+from backend.validators import validate_attachment_upload
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -145,6 +146,16 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 {'error': 'Message content or attachment required.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Validate attachment if provided
+        if attachment:
+            try:
+                validate_attachment_upload(attachment)
+            except serializers.ValidationError as e:
+                return Response(
+                    {'error': str(e.detail[0]) if hasattr(e, 'detail') else str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         message = Message.objects.create(
             conversation=conversation,

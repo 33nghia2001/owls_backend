@@ -14,7 +14,7 @@ from .serializers import (
     UpdateOrderStatusSerializer, VendorOrderItemSerializer
 )
 from apps.cart.models import Cart
-from apps.coupons.models import Coupon
+from apps.coupons.models import Coupon, CouponUsage
 from apps.vendors.permissions import IsApprovedVendor
 from apps.inventory.models import Inventory, InventoryMovement
 
@@ -202,10 +202,28 @@ class OrderViewSet(viewsets.ModelViewSet):
         # Clear cart
         cart.clear()
         
-        # Increment coupon usage
+        # Increment coupon usage with race condition protection
         if coupon:
-            coupon.used_count += 1
-            coupon.save()
+            # Atomic update with usage_limit check
+            if coupon.usage_limit:
+                updated = Coupon.objects.filter(
+                    id=coupon.id,
+                    used_count__lt=F('usage_limit')
+                ).update(used_count=F('used_count') + 1)
+                
+                if updated == 0:
+                    # Rollback by raising exception inside transaction
+                    raise ValueError('Coupon usage limit exceeded.')
+            else:
+                Coupon.objects.filter(id=coupon.id).update(used_count=F('used_count') + 1)
+            
+            # Create CouponUsage record for tracking
+            CouponUsage.objects.create(
+                coupon=coupon,
+                user=request.user,
+                order=order,
+                discount_applied=order.discount_amount
+            )
         
         return Response(
             OrderDetailSerializer(order).data,

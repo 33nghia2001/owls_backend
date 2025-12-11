@@ -93,13 +93,17 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Product.objects.select_related('vendor', 'category', 'brand').prefetch_related('images')
         
-        if self.action == 'my_products':
-            return queryset.filter(vendor=self.request.user.vendor_profile)
-        
-        if self.action in ['list', 'retrieve']:
+        # Public read actions - show only published products
+        if self.action in ['list', 'retrieve', 'featured', 'best_sellers', 'new_arrivals']:
             return queryset.filter(status='published')
         
-        return queryset
+        # Vendor-specific actions (create, update, delete, my_products, upload_images)
+        # Only return products owned by the authenticated vendor to prevent IDOR
+        if self.request.user.is_authenticated and hasattr(self.request.user, 'vendor_profile'):
+            return queryset.filter(vendor=self.request.user.vendor_profile)
+        
+        # Default: return empty queryset for safety
+        return queryset.none()
     
     def retrieve(self, request, *args, **kwargs):
         """Get product detail and increment view count (once per session)."""

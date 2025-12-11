@@ -3,6 +3,7 @@ from .models import (
     Category, Brand, Product, ProductImage, ProductAttribute,
     ProductAttributeValue, ProductVariant, ProductVariantAttribute, ProductTag
 )
+from backend.validators import validate_image_upload
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -44,6 +45,11 @@ class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
         fields = ['id', 'image', 'alt_text', 'is_primary', 'order']
+    
+    def validate_image(self, value):
+        """Validate uploaded image file."""
+        validate_image_upload(value)
+        return value
 
 
 class ProductAttributeValueSerializer(serializers.ModelSerializer):
