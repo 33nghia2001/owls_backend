@@ -47,6 +47,13 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # SECURITY: Check if coupon requires login (for high-value coupons)
+        if coupon.requires_login and not request.user.is_authenticated:
+            return Response({
+                'valid': False,
+                'error': 'Mã giảm giá này yêu cầu đăng nhập để sử dụng.'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         # Check minimum order amount
         if coupon.min_order_amount and order_amount < coupon.min_order_amount.amount:
             return Response({

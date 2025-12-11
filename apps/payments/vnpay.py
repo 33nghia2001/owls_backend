@@ -16,13 +16,17 @@ class VNPayService:
     
     def create_payment_url(self, order, return_url=None, client_ip=None):
         """Create VNPay payment URL."""
-        # Important: Multiply by 100 BEFORE converting to int to avoid precision loss
-        # VNPay expects amount in smallest currency unit (no decimals)
+        # IMPORTANT: Use Decimal arithmetic to avoid floating point precision issues
+        # VNPay expects amount in smallest currency unit (VND has no decimals)
+        from decimal import Decimal, ROUND_HALF_UP
+        amount_decimal = Decimal(str(order.total.amount)) * Decimal('100')
+        amount_int = int(amount_decimal.to_integral_value(rounding=ROUND_HALF_UP))
+        
         vnp_params = {
             'vnp_Version': '2.1.0',
             'vnp_Command': 'pay',
             'vnp_TmnCode': self.tmn_code,
-            'vnp_Amount': int(order.total.amount * 100),  # VNPay requires amount * 100
+            'vnp_Amount': amount_int,  # VNPay requires amount * 100
             'vnp_CurrCode': 'VND',
             'vnp_TxnRef': str(order.id)[:20],  # Max 20 chars
             'vnp_OrderInfo': f'Payment for order {order.order_number}',

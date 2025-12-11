@@ -137,3 +137,83 @@ class VendorPayout(models.Model):
     
     def __str__(self):
         return f"{self.vendor.shop_name} - {self.amount}"
+
+
+class VendorBalance(models.Model):
+    """
+    Track vendor balance with hold period for refund protection.
+    
+    Balance from order is held for HOLD_DAYS before becoming available for payout.
+    This protects against refund requests after vendor has already been paid.
+    """
+    
+    class Status(models.TextChoices):
+        HELD = 'held', 'Held (Pending Release)'
+        AVAILABLE = 'available', 'Available for Payout'
+        PAID_OUT = 'paid_out', 'Paid Out'
+        REFUNDED = 'refunded', 'Refunded to Customer'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name='balance_entries')
+    order_item = models.OneToOneField(
+        'orders.OrderItem',
+        on_delete=models.CASCADE,
+        related_name='vendor_balance'
+    )
+    
+    # Amount after platform commission
+    gross_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    commission_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    net_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.HELD)
+    
+    # Hold period - balance becomes available after this date
+    created_at = models.DateTimeField(auto_now_add=True)
+    available_at = models.DateTimeField(help_text='Date when balance becomes available for payout')
+    released_at = models.DateTimeField(null=True, blank=True)
+    
+    # Link to payout if paid
+    payout = models.ForeignKey(
+        VendorPayout, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='balance_entries'
+    )
+    
+    class Meta:
+        db_table = 'vendor_balances'
+        verbose_name = 'Vendor Balance'
+        verbose_name_plural = 'Vendor Balances'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.vendor.shop_name} - {self.net_amount} ({self.status})"
+    
+    @classmethod
+    def create_from_order_item(cls, order_item, hold_days=7):
+        """
+        Create a held balance entry from a delivered order item.
+        
+        Args:
+            order_item: The OrderItem that was delivered
+            hold_days: Number of days to hold balance before release (default: 7)
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        gross_amount = order_item.subtotal
+        commission_rate = order_item.commission_rate or order_item.vendor.commission_rate
+        commission_amount = gross_amount * (commission_rate / 100)
+        net_amount = gross_amount - commission_amount
+        
+        return cls.objects.create(
+            vendor=order_item.vendor,
+            order_item=order_item,
+            gross_amount=gross_amount,
+            commission_amount=commission_amount,
+            net_amount=net_amount,
+            status=cls.Status.HELD,
+            available_at=timezone.now() + timedelta(days=hold_days)
+        )

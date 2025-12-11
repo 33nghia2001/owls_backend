@@ -5,6 +5,7 @@ from celery import shared_task
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import F
+from django.conf import settings
 from datetime import timedelta
 import logging
 
@@ -23,8 +24,9 @@ def cancel_expired_pending_orders():
     """
     from apps.inventory.models import Inventory, InventoryMovement
     
-    # Orders pending for more than 30 minutes
-    expiration_time = timezone.now() - timedelta(minutes=30)
+    # Use configurable timeout (default 15 minutes to reduce DoI attack window)
+    timeout_minutes = getattr(settings, 'PENDING_ORDER_TIMEOUT_MINUTES', 15)
+    expiration_time = timezone.now() - timedelta(minutes=timeout_minutes)
     
     expired_orders = Order.objects.filter(
         status='pending',
@@ -47,37 +49,49 @@ def cancel_expired_pending_orders():
                     continue
                 
                 # Release reserved inventory for each order item
-                for item in current_order.items.all():
-                    # Find the corresponding inventory
+                # IMPORTANT: Sort items by inventory pk to prevent deadlock
+                order_items = list(current_order.items.select_related('product', 'variant').all())
+                
+                # Get all inventories first and sort by pk
+                item_inventory_pairs = []
+                for item in order_items:
                     if item.variant:
-                        inventory = Inventory.objects.filter(
-                            variant=item.variant
-                        ).select_for_update().first()
+                        inventory = Inventory.objects.filter(variant=item.variant).first()
                     else:
-                        inventory = Inventory.objects.filter(
-                            product=item.product
-                        ).select_for_update().first()
-                    
+                        inventory = Inventory.objects.filter(product=item.product).first()
                     if inventory:
-                        # Release the reserved quantity
-                        Inventory.objects.filter(pk=inventory.pk).update(
-                            reserved_quantity=F('reserved_quantity') - item.quantity
-                        )
-                        
-                        # Log the inventory movement
-                        InventoryMovement.objects.create(
-                            inventory=inventory,
-                            movement_type='released',
-                            quantity=item.quantity,
-                            reference_type='order_expired',
-                            reference_id=str(current_order.id),
-                            note=f'Auto-released from expired order {current_order.order_number}'
-                        )
+                        item_inventory_pairs.append((item, inventory))
+                
+                # Sort by inventory pk to ensure consistent locking order
+                item_inventory_pairs.sort(key=lambda x: x[1].pk)
+                
+                for item, inventory in item_inventory_pairs:
+                    # Lock inventory in consistent order
+                    locked_inventory = Inventory.objects.select_for_update().get(pk=inventory.pk)
+                    
+                for item, inventory in item_inventory_pairs:
+                    # Lock inventory in consistent order
+                    locked_inventory = Inventory.objects.select_for_update().get(pk=inventory.pk)
+                    
+                    # Release the reserved quantity
+                    Inventory.objects.filter(pk=locked_inventory.pk).update(
+                        reserved_quantity=F('reserved_quantity') - item.quantity
+                    )
+                    
+                    # Log the inventory movement
+                    InventoryMovement.objects.create(
+                        inventory=locked_inventory,
+                        movement_type='released',
+                        quantity=item.quantity,
+                        reference_type='order_expired',
+                        reference_id=str(current_order.id),
+                        note=f'Auto-released from expired order {current_order.order_number}'
+                    )
                 
                 # Update order status
                 current_order.status = 'cancelled'
                 current_order.cancelled_at = timezone.now()
-                current_order.note = 'Auto-cancelled due to payment timeout (30 minutes)'
+                current_order.note = f'Auto-cancelled due to payment timeout ({timeout_minutes} minutes)'
                 current_order.save()
                 
                 # Update all items
@@ -87,7 +101,7 @@ def cancel_expired_pending_orders():
                 OrderStatusHistory.objects.create(
                     order=current_order,
                     status='cancelled',
-                    note='Auto-cancelled: Payment not received within 30 minutes'
+                    note=f'Auto-cancelled: Payment not received within {timeout_minutes} minutes'
                 )
                 
                 cancelled_count += 1

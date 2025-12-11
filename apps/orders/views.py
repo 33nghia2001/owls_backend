@@ -88,7 +88,20 @@ class OrderViewSet(viewsets.ModelViewSet):
             'variant'
         ).order_by('product__id', 'variant__id')
         
-        # 1. CHECK INVENTORY AND VALIDATE/UPDATE PRICES BEFORE CREATING ORDER
+        # Check limit on pending orders per user to prevent Denial of Inventory attack
+        pending_order_count = Order.objects.filter(
+            user=request.user,
+            status='pending',
+            payment_status='pending'
+        ).count()
+        max_pending_orders = getattr(settings, 'MAX_PENDING_ORDERS_PER_USER', 3)
+        if pending_order_count >= max_pending_orders:
+            return Response(
+                {'error': f'Bạn đã có {pending_order_count} đơn hàng chưa thanh toán. Vui lòng thanh toán hoặc hủy trước khi đặt đơn mới.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+        
+        # 1. CHECK INVENTORY AND VALIDATE PRICES BEFORE CREATING ORDER
         inventory_updates = []  # Store inventory objects to update later
         price_changes = []  # Track any price changes for user notification
         
@@ -113,18 +126,27 @@ class OrderViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Auto-update cart item price if changed (better UX than blocking)
+            # SECURITY: Block order if price changed - require user confirmation
+            # This prevents "price slippage" where user pays more than expected
             if item.unit_price != current_price:
-                old_price = item.unit_price
-                item.unit_price = current_price
-                item.save(update_fields=['unit_price'])
                 price_changes.append({
                     'product': item.product.name,
-                    'old_price': str(old_price),
+                    'old_price': str(item.unit_price),
                     'new_price': str(current_price)
                 })
             
             inventory_updates.append((item, inventory))
+        
+        # If any prices changed, return 409 Conflict requiring user to refresh cart
+        if price_changes:
+            return Response(
+                {
+                    'error': 'Giá một số sản phẩm đã thay đổi. Vui lòng cập nhật giỏ hàng.',
+                    'price_changes': price_changes,
+                    'action_required': 'refresh_cart'
+                },
+                status=status.HTTP_409_CONFLICT
+            )
         
         # Recalculate cart subtotal after price updates
         cart.refresh_from_db()
@@ -245,13 +267,10 @@ class OrderViewSet(viewsets.ModelViewSet):
                 discount_applied=order.discount_amount
             )
         
-        # Build response with price change notifications if any
-        response_data = OrderDetailSerializer(order).data
-        if price_changes:
-            response_data['price_updates'] = price_changes
-            response_data['message'] = 'Đơn hàng đã được tạo. Lưu ý: một số sản phẩm đã được cập nhật giá mới.'
-        
-        return Response(response_data, status=status.HTTP_201_CREATED)
+        return Response(
+            OrderDetailSerializer(order).data,
+            status=status.HTTP_201_CREATED
+        )
     
     @action(detail=True, methods=['post'])
     @transaction.atomic

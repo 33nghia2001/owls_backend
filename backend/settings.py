@@ -256,11 +256,19 @@ STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
 VNPAY_TMN_CODE = env('VNPAY_TMN_CODE', default='')
 VNPAY_HASH_SECRET = env('VNPAY_HASH_SECRET', default='')
 VNPAY_URL = env('VNPAY_URL', default='https://sandbox.vnpayment.vn/paymentv2/vpcpay.html')
-VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default='http://localhost:8000/api/payments/vnpay-return/')
+VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default='http://localhost:8000/api/payments/payments/vnpay_return/')
+VNPAY_IPN_URL = env('VNPAY_IPN_URL', default='http://localhost:8000/api/payments/payments/vnpay_ipn/')
 
 # Shipping Settings
 DEFAULT_SHIPPING_COST = env.int('DEFAULT_SHIPPING_COST', default=30000)  # VND
 FREE_SHIPPING_THRESHOLD = env.int('FREE_SHIPPING_THRESHOLD', default=500000)  # Free shipping for orders >= 500k VND
+
+# Order Settings - Denial of Inventory Protection
+MAX_PENDING_ORDERS_PER_USER = env.int('MAX_PENDING_ORDERS_PER_USER', default=3)
+PENDING_ORDER_TIMEOUT_MINUTES = env.int('PENDING_ORDER_TIMEOUT_MINUTES', default=15)
+
+# Vendor Payout Settings - Hold period before release
+VENDOR_PAYOUT_HOLD_DAYS = env.int('VENDOR_PAYOUT_HOLD_DAYS', default=7)
 
 # Django Channels (WebSocket) Configuration
 ASGI_APPLICATION = 'backend.asgi.application'

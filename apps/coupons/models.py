@@ -67,6 +67,12 @@ class Coupon(models.Model):
     )
     is_public = models.BooleanField(default=True)  # Show in coupon list
     
+    # SECURITY: Require login for high-value coupons to prevent guest abuse
+    requires_login = models.BooleanField(
+        default=False, 
+        help_text='If True, only authenticated users can use this coupon (prevents guest abuse)'
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

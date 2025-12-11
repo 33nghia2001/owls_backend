@@ -329,3 +329,103 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 pass
         
         return Response({'status': 'success'})
+    
+    @action(detail=False, methods=['get', 'post'], permission_classes=[AllowAny])
+    @transaction.atomic
+    def vnpay_ipn(self, request):
+        """
+        Handle VNPay IPN (Instant Payment Notification) - Server-to-Server callback.
+        
+        CRITICAL: This endpoint is called directly by VNPay servers, not by user's browser.
+        This ensures payment confirmation even if user closes browser after payment.
+        
+        VNPay expects specific response format:
+        - RspCode=00, Message=Confirm Success - for successful confirmation
+        - RspCode=XX - for errors (01=Order not found, 02=Already confirmed, etc.)
+        """
+        # Support both GET and POST from VNPay
+        if request.method == 'POST':
+            params = dict(request.POST)
+        else:
+            params = dict(request.GET)
+        
+        # Flatten list values
+        params = {k: v[0] if isinstance(v, list) else v for k, v in params.items()}
+        
+        vnpay_service = VNPayService()
+        
+        # Verify signature first
+        if not vnpay_service.verify_callback(params.copy()):
+            return Response({
+                'RspCode': '97',
+                'Message': 'Invalid Signature'
+            })
+        
+        # Get order and payment
+        order_id = params.get('vnp_TxnRef')
+        try:
+            order = Order.objects.select_for_update().get(id=order_id)
+            payment = order.payment
+        except Order.DoesNotExist:
+            return Response({
+                'RspCode': '01',
+                'Message': 'Order not found'
+            })
+        except Payment.DoesNotExist:
+            return Response({
+                'RspCode': '01',
+                'Message': 'Payment not found'
+            })
+        
+        # Idempotency check - already confirmed
+        if payment.status == 'completed':
+            return Response({
+                'RspCode': '02',
+                'Message': 'Order already confirmed'
+            })
+        
+        # Validate amount matches order total (VNPay sends amount * 100)
+        vnp_amount = Decimal(params.get('vnp_Amount', 0)) / 100
+        if vnp_amount != order.total.amount:
+            return Response({
+                'RspCode': '04',
+                'Message': 'Invalid Amount'
+            })
+        
+        # Log callback
+        response_code = params.get('vnp_ResponseCode')
+        is_success = vnpay_service.is_success(response_code)
+        
+        PaymentLog.objects.create(
+            payment=payment,
+            action='vnpay_ipn',
+            request_data=params,
+            response_data={'response_code': response_code},
+            is_success=is_success
+        )
+        
+        if is_success:
+            payment.status = 'completed'
+            payment.transaction_id = params.get('vnp_TransactionNo', '')
+            payment.gateway_response = params
+            payment.completed_at = timezone.now()
+            payment.save()
+            
+            order.payment_status = 'paid'
+            order.status = 'confirmed'
+            order.confirmed_at = timezone.now()
+            order.save()
+            
+            return Response({
+                'RspCode': '00',
+                'Message': 'Confirm Success'
+            })
+        else:
+            payment.status = 'failed'
+            payment.gateway_response = params
+            payment.save()
+            
+            return Response({
+                'RspCode': '00',
+                'Message': 'Confirm Success'  # VNPay expects 00 even for failed payments
+            })
