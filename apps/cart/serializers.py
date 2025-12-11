@@ -25,11 +25,16 @@ class CartSerializer(serializers.ModelSerializer):
     items = CartItemSerializer(many=True, read_only=True)
     total_items = serializers.ReadOnlyField()
     subtotal = serializers.ReadOnlyField()
+    cart_id = serializers.SerializerMethodField()
     
     class Meta:
         model = Cart
-        fields = ['id', 'items', 'total_items', 'subtotal', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'cart_id', 'items', 'total_items', 'subtotal', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'cart_id', 'created_at', 'updated_at']
+    
+    def get_cart_id(self, obj):
+        """Return session_key as cart_id for guest carts."""
+        return obj.session_key if not obj.user else None
 
 
 class AddToCartSerializer(serializers.Serializer):

@@ -15,46 +15,80 @@ class CartViewSet(viewsets.ViewSet):
     """ViewSet for shopping cart operations."""
     permission_classes = [AllowAny]
     
-    def get_cart(self, request):
-        """Get or create cart for user or session."""
+    def _get_guest_cart_id(self, request):
+        """Extract guest_cart_id from request params or body."""
+        # Check query params first, then body
+        guest_cart_id = request.query_params.get('guest_cart_id')
+        if not guest_cart_id and hasattr(request, 'data'):
+            guest_cart_id = request.data.get('guest_cart_id')
+        return guest_cart_id
+    
+    def get_cart(self, request, merge_guest_cart_id=None):
+        """
+        Get or create cart for user or session.
+        
+        For authenticated users: Returns user's cart, merges guest cart if provided.
+        For guests: Uses guest_cart_id from frontend if available, 
+                   falls back to session_key.
+        """
+        guest_cart_id = merge_guest_cart_id or self._get_guest_cart_id(request)
+        
         if request.user.is_authenticated:
             cart, created = Cart.objects.prefetch_related(
                 'items__product__vendor',
                 'items__product__images',
                 'items__variant'
             ).get_or_create(user=request.user)
-            # Merge session cart if exists
+            
+            # Try to merge guest cart if guest_cart_id provided
+            if guest_cart_id:
+                try:
+                    guest_cart = Cart.objects.get(session_key=guest_cart_id, user__isnull=True)
+                    self._merge_carts(guest_cart, cart)
+                except Cart.DoesNotExist:
+                    pass
+            
+            # Also check session-based cart (cookie)
             session_key = request.session.session_key
             if session_key:
                 try:
                     session_cart = Cart.objects.get(session_key=session_key, user__isnull=True)
-                    # Merge items
-                    for item in session_cart.items.select_related('product', 'variant').all():
-                        existing = cart.items.filter(
-                            product=item.product, 
-                            variant=item.variant
-                        ).first()
-                        if existing:
-                            existing.quantity += item.quantity
-                            existing.save()
-                        else:
-                            item.cart = cart
-                            item.save()
-                    session_cart.delete()
+                    self._merge_carts(session_cart, cart)
                 except Cart.DoesNotExist:
                     pass
         else:
-            if not request.session.session_key:
-                request.session.create()
+            # Guest user - prefer frontend's guest_cart_id, fallback to session
+            cart_session_key = guest_cart_id
+            
+            if not cart_session_key:
+                if not request.session.session_key:
+                    request.session.create()
+                cart_session_key = request.session.session_key
+            
             cart, created = Cart.objects.prefetch_related(
                 'items__product__vendor',
                 'items__product__images',
                 'items__variant'
             ).get_or_create(
-                session_key=request.session.session_key,
+                session_key=cart_session_key,
                 user__isnull=True
             )
         return cart
+    
+    def _merge_carts(self, source_cart, target_cart):
+        """Merge items from source cart into target cart, then delete source."""
+        for item in source_cart.items.select_related('product', 'variant').all():
+            existing = target_cart.items.filter(
+                product=item.product, 
+                variant=item.variant
+            ).first()
+            if existing:
+                existing.quantity += item.quantity
+                existing.save()
+            else:
+                item.cart = target_cart
+                item.save()
+        source_cart.delete()
     
     def list(self, request):
         """Get current cart."""
