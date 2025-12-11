@@ -8,12 +8,14 @@ from django.conf import settings
 from django.db import transaction
 from decimal import Decimal
 import stripe
+import logging
 
 from .models import Payment, PaymentLog
 from .serializers import PaymentSerializer, CreatePaymentSerializer
 from .vnpay import VNPayService
 from apps.orders.models import Order
 
+logger = logging.getLogger(__name__)
 
 # Initialize Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -299,12 +301,41 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             payment_id = session['metadata'].get('payment_id')
             
             try:
-                payment = Payment.objects.get(id=payment_id)
+                payment = Payment.objects.select_for_update().get(id=payment_id)
                 order = payment.order
                 
                 # Idempotency check - prevent duplicate processing
                 if payment.status == 'completed':
                     return Response({'status': 'already_processed'})
+                
+                # CRITICAL: Check if order was cancelled (race condition with cancel task)
+                # If order cancelled but payment received -> flag for refund
+                if order.status == 'cancelled':
+                    payment.status = 'pending_refund'
+                    payment.transaction_id = session.get('payment_intent', '')
+                    payment.gateway_response = dict(session)
+                    payment.completed_at = timezone.now()
+                    payment.save()
+                    
+                    PaymentLog.objects.create(
+                        payment=payment,
+                        action='stripe_webhook_cancelled_order',
+                        request_data={'event_type': event['type']},
+                        response_data={'session_id': session['id']},
+                        is_success=False,
+                        error_message='Payment received for cancelled order - requires refund'
+                    )
+                    
+                    # TODO: Trigger automatic refund or notify admin
+                    logger.warning(
+                        f"Payment received for cancelled order {order.order_number}. "
+                        f"Payment ID: {payment.id}. Requires manual refund."
+                    )
+                    
+                    return Response({
+                        'status': 'cancelled_order_refund_needed',
+                        'order_id': str(order.id)
+                    })
                 
                 payment.status = 'completed'
                 payment.transaction_id = session.get('payment_intent', '')
@@ -405,6 +436,34 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         )
         
         if is_success:
+            # CRITICAL: Check if order was cancelled (race condition with cancel task)
+            # If order cancelled but payment received -> flag for refund
+            if order.status == 'cancelled':
+                payment.status = 'pending_refund'
+                payment.transaction_id = params.get('vnp_TransactionNo', '')
+                payment.gateway_response = params
+                payment.completed_at = timezone.now()
+                payment.save()
+                
+                PaymentLog.objects.create(
+                    payment=payment,
+                    action='vnpay_ipn_cancelled_order',
+                    request_data=params,
+                    response_data={'response_code': response_code},
+                    is_success=False,
+                    error_message='Payment received for cancelled order - requires refund'
+                )
+                
+                logger.warning(
+                    f"VNPay payment received for cancelled order {order.order_number}. "
+                    f"Transaction: {params.get('vnp_TransactionNo')}. Requires manual refund."
+                )
+                
+                return Response({
+                    'RspCode': '00',
+                    'Message': 'Confirm Success'  # Acknowledge receipt, but flag for refund
+                })
+            
             payment.status = 'completed'
             payment.transaction_id = params.get('vnp_TransactionNo', '')
             payment.gateway_response = params

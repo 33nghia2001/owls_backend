@@ -11,7 +11,8 @@ class Review(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,  # Preserve reviews when user deleted
+        null=True,
         related_name='reviews'
     )
     product = models.ForeignKey(

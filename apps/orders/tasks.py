@@ -113,10 +113,18 @@ def cancel_expired_pending_orders():
     return f"Cancelled {cancelled_count} expired orders"
 
 
-@shared_task
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,  # Max 10 minutes between retries
+    max_retries=5,
+    retry_jitter=True
+)
 def send_order_confirmation_email(order_id):
     """
     Send order confirmation email to customer.
+    
+    Has automatic retry with exponential backoff for network/SMTP errors.
     """
     from django.core.mail import send_mail
     from django.conf import settings

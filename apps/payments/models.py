@@ -20,6 +20,7 @@ class Payment(models.Model):
         FAILED = 'failed', 'Failed'
         CANCELLED = 'cancelled', 'Cancelled'
         REFUNDED = 'refunded', 'Refunded'
+        PENDING_REFUND = 'pending_refund', 'Pending Refund'  # For race condition with cancel
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.OneToOneField(
