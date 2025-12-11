@@ -353,13 +353,15 @@ class VendorOrderViewSet(viewsets.ReadOnlyModelViewSet):
         ).order_by('-created_at')
     
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def update_status(self, request, pk=None):
-        """Update order item status."""
+        """Update order item status with proper inventory handling."""
         item = self.get_object()
         serializer = UpdateOrderStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         new_status = serializer.validated_data['status']
+        old_status = item.status
         
         # Validate status transition
         valid_transitions = {
@@ -377,6 +379,9 @@ class VendorOrderViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Handle inventory changes based on status transition
+        self._handle_inventory_for_status_change(item, old_status, new_status, request.user)
+        
         item.status = new_status
         item.save()
         
@@ -388,7 +393,76 @@ class VendorOrderViewSet(viewsets.ReadOnlyModelViewSet):
             created_by=request.user
         )
         
+        # Create vendor balance when item is delivered
+        if new_status == 'delivered':
+            self._create_vendor_balance(item)
+        
         return Response(VendorOrderItemSerializer(item).data)
+    
+    def _handle_inventory_for_status_change(self, item, old_status, new_status, user):
+        """
+        Handle inventory updates when order item status changes.
+        
+        Flow:
+        - pending -> confirmed/processing: No change (still reserved)
+        - processing -> shipped: Deduct from quantity, release from reserved
+        - any -> cancelled: Release from reserved (return to available)
+        """
+        # Get inventory
+        if item.variant:
+            inventory = Inventory.objects.filter(variant=item.variant).select_for_update().first()
+        else:
+            inventory = Inventory.objects.filter(product=item.product).select_for_update().first()
+        
+        if not inventory:
+            return
+        
+        if new_status == 'shipped' and old_status in ['confirmed', 'processing']:
+            # Item is being shipped - deduct from total quantity and release reservation
+            Inventory.objects.filter(pk=inventory.pk).update(
+                quantity=F('quantity') - item.quantity,
+                reserved_quantity=F('reserved_quantity') - item.quantity
+            )
+            
+            # Log inventory movement
+            InventoryMovement.objects.create(
+                inventory=inventory,
+                movement_type='out',
+                quantity=item.quantity,
+                reference_type='order_shipped',
+                reference_id=str(item.order.id),
+                note=f'Shipped for order {item.order.order_number}',
+                created_by=user
+            )
+        
+        elif new_status == 'cancelled' and old_status in ['pending', 'confirmed', 'processing']:
+            # Order cancelled - release reserved quantity back to available
+            Inventory.objects.filter(pk=inventory.pk).update(
+                reserved_quantity=F('reserved_quantity') - item.quantity
+            )
+            
+            # Log inventory movement
+            InventoryMovement.objects.create(
+                inventory=inventory,
+                movement_type='released',
+                quantity=item.quantity,
+                reference_type='order_cancelled_vendor',
+                reference_id=str(item.order.id),
+                note=f'Released from cancelled order {item.order.order_number} (vendor)',
+                created_by=user
+            )
+    
+    def _create_vendor_balance(self, item):
+        """Create vendor balance entry when item is delivered."""
+        from apps.vendors.models import VendorBalance
+        from django.conf import settings
+        
+        # Check if balance already exists
+        if hasattr(item, 'vendor_balance'):
+            return
+        
+        hold_days = getattr(settings, 'VENDOR_PAYOUT_HOLD_DAYS', 7)
+        VendorBalance.create_from_order_item(item, hold_days=hold_days)
     
     @action(detail=False, methods=['get'])
     def stats(self, request):

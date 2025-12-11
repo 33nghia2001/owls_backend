@@ -202,10 +202,12 @@ class VendorBalance(models.Model):
         """
         from django.utils import timezone
         from datetime import timedelta
+        from decimal import Decimal
         
-        gross_amount = order_item.subtotal
+        # Use total_price (not subtotal - OrderItem doesn't have subtotal field)
+        gross_amount = order_item.total_price.amount
         commission_rate = order_item.commission_rate or order_item.vendor.commission_rate
-        commission_amount = gross_amount * (commission_rate / 100)
+        commission_amount = gross_amount * (Decimal(str(commission_rate)) / Decimal('100'))
         net_amount = gross_amount - commission_amount
         
         return cls.objects.create(

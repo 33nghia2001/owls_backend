@@ -23,11 +23,15 @@ def increment_view_count(product_id):
     """
     cache_key = f"{VIEW_COUNT_PREFIX}{product_id}"
     try:
-        # Use Redis INCR for atomic increment
-        # If key doesn't exist, it will be created with value 1
-        current = cache.get(cache_key, 0)
-        cache.set(cache_key, current + 1, timeout=None)  # No expiry, we'll clean up after sync
-        return True
+        # Use atomic INCR to avoid race condition
+        # cache.incr will create the key with value 1 if it doesn't exist (Redis behavior)
+        # If using Django's cache backend, need to handle KeyError for missing keys
+        try:
+            return cache.incr(cache_key)
+        except ValueError:
+            # Key doesn't exist, set it to 1
+            cache.set(cache_key, 1, timeout=None)
+            return 1
     except Exception as e:
         logger.warning(f"Failed to increment view count in Redis for product {product_id}: {e}")
         return False

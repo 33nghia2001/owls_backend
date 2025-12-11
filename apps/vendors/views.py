@@ -37,11 +37,25 @@ class VendorViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def register(self, request):
         """Register as a vendor."""
+        # Check if user already has a vendor profile
         if hasattr(request.user, 'vendor_profile'):
-            return Response(
-                {'error': 'You are already a vendor.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            vendor = request.user.vendor_profile
+            
+            # Allow re-registration if previously rejected
+            if vendor.status == 'rejected':
+                # Delete old profile and allow fresh registration
+                vendor.delete()
+            elif vendor.status == 'pending':
+                return Response(
+                    {'error': 'Đơn đăng ký vendor của bạn đang chờ xét duyệt.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            else:
+                # approved or suspended
+                return Response(
+                    {'error': 'Bạn đã là vendor.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         serializer = VendorRegistrationSerializer(
             data=request.data, 

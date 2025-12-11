@@ -8,10 +8,30 @@ import string
 
 
 def generate_order_number():
-    """Generate unique order number."""
+    """
+    Generate unique order number with collision retry.
+    
+    Format: OWL + 8 random chars (e.g., OWLABC12DEF)
+    If collision detected, retry with new random part.
+    """
+    from django.db import IntegrityError
+    
     prefix = 'OWL'
-    random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-    return f"{prefix}{random_part}"
+    max_attempts = 10
+    
+    for _ in range(max_attempts):
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        order_number = f"{prefix}{random_part}"
+        
+        # Check if already exists (without hitting IntegrityError)
+        if not Order.objects.filter(order_number=order_number).exists():
+            return order_number
+    
+    # Fallback: use timestamp + random to ensure uniqueness
+    import time
+    timestamp = str(int(time.time()))[-6:]  # Last 6 digits of timestamp
+    random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    return f"{prefix}{timestamp}{random_part}"
 
 
 class Order(models.Model):
