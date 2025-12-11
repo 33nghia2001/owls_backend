@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .models import Inventory, InventoryMovement
 from apps.vendors.permissions import IsApprovedVendor
@@ -21,6 +22,38 @@ class InventorySerializer(serializers.ModelSerializer):
             'reserved_quantity', 'available_quantity', 'is_in_stock',
             'is_low_stock', 'low_stock_threshold', 'warehouse_location'
         ]
+    
+    def validate(self, attrs):
+        """
+        Validate inventory constraints before saving.
+        Prevents Ghost Inventory (product with variants having its own inventory).
+        """
+        product = attrs.get('product')
+        variant = attrs.get('variant')
+        
+        # For updates, get existing values if not in attrs
+        if self.instance:
+            product = product if 'product' in attrs else self.instance.product
+            variant = variant if 'variant' in attrs else self.instance.variant
+        
+        # Must have exactly one of product or variant
+        if product and variant:
+            raise serializers.ValidationError(
+                "Inventory cannot be linked to both product and variant."
+            )
+        if not product and not variant:
+            raise serializers.ValidationError(
+                "Inventory must be linked to either a product or variant."
+            )
+        
+        # CRITICAL: Prevent Ghost Inventory
+        if product and product.variants.exists():
+            raise serializers.ValidationError(
+                f"Cannot create inventory for product '{product.name}' because it has variants. "
+                "Inventory must be managed at the variant level."
+            )
+        
+        return attrs
     
     def get_product_name(self, obj):
         if obj.product:

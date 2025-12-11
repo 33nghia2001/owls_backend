@@ -21,6 +21,7 @@ class Payment(models.Model):
         CANCELLED = 'cancelled', 'Cancelled'
         REFUNDED = 'refunded', 'Refunded'
         PENDING_REFUND = 'pending_refund', 'Pending Refund'  # For race condition with cancel
+        REFUND_PENDING = 'refund_pending', 'Refund Processing'  # Refund initiated, awaiting confirmation
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.OneToOneField(

@@ -106,30 +106,58 @@ class ProductViewSet(viewsets.ModelViewSet):
         return queryset.none()
     
     def retrieve(self, request, *args, **kwargs):
-        """Get product detail and increment view count (once per session)."""
+        """Get product detail and increment view count (once per session/fingerprint)."""
         from .tasks import increment_view_count
+        import hashlib
         
         instance = self.get_object()
+        product_id = str(instance.pk)
         
         # SECURITY: Prevent DoS via view count spam
-        # Only count views for requests with an existing session (has session key)
-        # This prevents attackers from flooding the DB with write operations
-        # by sending sessionless requests
+        # Generate a unique viewer identifier
+        
         if request.session.session_key:
+            # Primary: Use session key for browser users
+            viewer_id = request.session.session_key
             viewed_products = request.session.get('viewed_products', [])
-            product_id = str(instance.pk)
             
             if product_id not in viewed_products:
-                # Use Redis for high-performance view counting (non-blocking)
-                # Actual DB sync happens via Celery task every 10 minutes
                 increment_view_count(instance.pk)
                 viewed_products.append(product_id)
                 # Keep only last 100 viewed products in session
                 request.session['viewed_products'] = viewed_products[-100:]
                 request.session.modified = True
+        else:
+            # Fallback: For mobile apps/SPAs without session cookies
+            # Use IP + User-Agent + Product ID hash to dedupe
+            # Note: This is less accurate than session but prevents simple spam
+            from django.core.cache import cache
+            
+            client_ip = self._get_client_ip(request)
+            user_agent = request.META.get('HTTP_USER_AGENT', '')[:200]  # Limit UA length
+            
+            # Create a fingerprint hash
+            fingerprint = hashlib.sha256(
+                f"{client_ip}:{user_agent}:{product_id}".encode()
+            ).hexdigest()[:32]
+            
+            cache_key = f"product_view:{fingerprint}"
+            
+            # Check if already viewed in last 24 hours
+            if not cache.get(cache_key):
+                increment_view_count(instance.pk)
+                cache.set(cache_key, 1, timeout=86400)  # 24 hours
         
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+    
+    def _get_client_ip(self, request):
+        """Extract client IP from request, handling proxies."""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            # Take first IP if multiple (first is real client)
+            return x_forwarded_for.split(',')[0].strip()
+        return request.META.get('REMOTE_ADDR', '')
     
     @action(detail=False, methods=['get'])
     def my_products(self, request):

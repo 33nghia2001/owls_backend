@@ -488,3 +488,201 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 'RspCode': '00',
                 'Message': 'Confirm Success'  # VNPay expects 00 even for failed payments
             })
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    @transaction.atomic
+    def refund(self, request, pk=None):
+        """
+        Process a refund for a payment.
+        
+        Only works for:
+        - Stripe payments with valid payment_intent/charge ID
+        - Payments in 'completed' or 'pending_refund' status
+        
+        Requires admin or staff permission.
+        """
+        from apps.vendors.permissions import IsAdminOrStaff
+        
+        # Check permission
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Only staff can process refunds.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        payment = get_object_or_404(Payment, pk=pk)
+        
+        # Validate payment status
+        if payment.status not in ['completed', 'pending_refund']:
+            return Response(
+                {'error': f'Cannot refund payment with status: {payment.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get refund amount (optional partial refund)
+        refund_amount = request.data.get('amount')
+        reason = request.data.get('reason', 'requested_by_customer')
+        
+        if payment.method == 'stripe':
+            return self._process_stripe_refund(payment, refund_amount, reason)
+        elif payment.method == 'vnpay':
+            return self._process_vnpay_refund(payment, refund_amount, reason)
+        elif payment.method == 'cod':
+            # COD refunds are manual - just update status
+            payment.status = 'refunded'
+            payment.save()
+            
+            PaymentLog.objects.create(
+                payment=payment,
+                action='cod_refund',
+                request_data={'reason': reason},
+                response_data={'status': 'manual_refund'},
+                is_success=True
+            )
+            
+            return Response({
+                'success': True,
+                'message': 'COD payment marked as refunded (manual process).'
+            })
+        
+        return Response(
+            {'error': 'Unsupported payment method for refund.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    def _process_stripe_refund(self, payment, refund_amount=None, reason='requested_by_customer'):
+        """Process a Stripe refund."""
+        if not payment.transaction_id:
+            return Response(
+                {'error': 'No Stripe payment_intent found for this payment.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Build refund parameters
+            refund_params = {
+                'payment_intent': payment.transaction_id,
+                'reason': reason,  # 'duplicate', 'fraudulent', 'requested_by_customer'
+            }
+            
+            if refund_amount:
+                # Partial refund - amount in smallest currency unit
+                refund_params['amount'] = int(Decimal(refund_amount))
+            
+            # Create the refund via Stripe API
+            refund = stripe.Refund.create(**refund_params)
+            
+            # Update payment status
+            if refund.status == 'succeeded':
+                payment.status = 'refunded'
+            else:
+                payment.status = 'refund_pending'
+            
+            payment.gateway_response = {
+                **payment.gateway_response,
+                'refund_id': refund.id,
+                'refund_status': refund.status,
+                'refund_amount': refund.amount,
+            }
+            payment.save()
+            
+            PaymentLog.objects.create(
+                payment=payment,
+                action='stripe_refund',
+                request_data={
+                    'payment_intent': payment.transaction_id,
+                    'amount': refund_amount,
+                    'reason': reason,
+                },
+                response_data={
+                    'refund_id': refund.id,
+                    'status': refund.status,
+                    'amount': refund.amount,
+                },
+                is_success=True
+            )
+            
+            logger.info(
+                f"Stripe refund processed for payment {payment.id}. "
+                f"Refund ID: {refund.id}, Status: {refund.status}"
+            )
+            
+            return Response({
+                'success': True,
+                'refund_id': refund.id,
+                'refund_status': refund.status,
+                'refund_amount': refund.amount / 100,  # Convert from cents
+                'message': 'Refund processed successfully.'
+            })
+            
+        except stripe.error.StripeError as e:
+            PaymentLog.objects.create(
+                payment=payment,
+                action='stripe_refund',
+                request_data={
+                    'payment_intent': payment.transaction_id,
+                    'amount': refund_amount,
+                },
+                response_data={},
+                is_success=False,
+                error_message=str(e)
+            )
+            
+            logger.error(f"Stripe refund failed for payment {payment.id}: {e}")
+            
+            return Response(
+                {'error': f'Stripe refund failed: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def _process_vnpay_refund(self, payment, refund_amount=None, reason='requested_by_customer'):
+        """
+        Process a VNPay refund.
+        
+        NOTE: VNPay requires a separate refund API integration.
+        This is a placeholder that marks for manual refund processing.
+        
+        For full implementation, integrate with VNPay's refund API:
+        https://sandbox.vnpayment.vn/apis/docs/huong-dan-tich-hop/
+        """
+        # For now, mark as pending manual refund
+        # Full VNPay refund API requires:
+        # - vnp_RequestId: Unique request ID
+        # - vnp_Command: refund
+        # - vnp_TxnRef: Original transaction reference
+        # - vnp_Amount: Refund amount * 100
+        # - vnp_TransactionNo: Original transaction number
+        # - etc.
+        
+        payment.status = 'refund_pending'
+        payment.gateway_response = {
+            **payment.gateway_response,
+            'refund_reason': reason,
+            'refund_requested_at': timezone.now().isoformat(),
+            'refund_status': 'manual_processing_required',
+        }
+        payment.save()
+        
+        PaymentLog.objects.create(
+            payment=payment,
+            action='vnpay_refund_requested',
+            request_data={
+                'transaction_id': payment.transaction_id,
+                'amount': refund_amount or str(payment.amount.amount),
+                'reason': reason,
+            },
+            response_data={'status': 'manual_processing_required'},
+            is_success=True,
+            error_message='VNPay refund requires manual processing or full API integration.'
+        )
+        
+        logger.warning(
+            f"VNPay refund requested for payment {payment.id}. "
+            f"Transaction: {payment.transaction_id}. Manual processing required."
+        )
+        
+        return Response({
+            'success': True,
+            'message': 'VNPay refund has been flagged for manual processing.',
+            'note': 'VNPay refunds require bank processing (1-3 business days).'
+        })

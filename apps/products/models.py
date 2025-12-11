@@ -1,8 +1,41 @@
-from django.db import models
+from django.db import models, IntegrityError
 from django.utils.text import slugify
 from mptt.models import MPTTModel, TreeForeignKey
 from djmoney.models.fields import MoneyField
 import uuid
+import secrets
+
+
+def generate_unique_slug(base_slug, model_class, existing_instance=None):
+    """
+    Generate a unique slug with retry logic to handle race conditions.
+    
+    Args:
+        base_slug: The initial slug to try
+        model_class: The Django model class to check uniqueness against
+        existing_instance: If updating, exclude this instance from uniqueness check
+    
+    Returns:
+        A unique slug string
+    """
+    slug = base_slug
+    max_retries = 10
+    
+    for attempt in range(max_retries):
+        # Build queryset to check for duplicates
+        qs = model_class.objects.filter(slug=slug)
+        if existing_instance and existing_instance.pk:
+            qs = qs.exclude(pk=existing_instance.pk)
+        
+        if not qs.exists():
+            return slug
+        
+        # Collision found, add random suffix
+        suffix = secrets.token_hex(3)  # 6 hex chars
+        slug = f"{base_slug}-{suffix}"
+    
+    # Last resort: use UUID
+    return f"{base_slug}-{uuid.uuid4().hex[:8]}"
 
 
 class Category(MPTTModel):
@@ -42,8 +75,21 @@ class Category(MPTTModel):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
+            base_slug = slugify(self.name)
+            self.slug = generate_unique_slug(base_slug, Category, self)
+        
+        # Retry loop to handle race conditions
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except IntegrityError as e:
+                if 'slug' in str(e).lower() and attempt < max_retries - 1:
+                    base_slug = slugify(self.name)
+                    self.slug = generate_unique_slug(base_slug, Category, self)
+                else:
+                    raise
 
 
 class Brand(models.Model):
@@ -64,6 +110,27 @@ class Brand(models.Model):
         verbose_name = 'Brand'
         verbose_name_plural = 'Brands'
         ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            self.slug = generate_unique_slug(base_slug, Brand, self)
+        
+        # Retry loop to handle race conditions
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except IntegrityError as e:
+                if 'slug' in str(e).lower() and attempt < max_retries - 1:
+                    base_slug = slugify(self.name)
+                    self.slug = generate_unique_slug(base_slug, Brand, self)
+                else:
+                    raise
     
     def __str__(self):
         return self.name
@@ -160,8 +227,23 @@ class Product(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             base_slug = slugify(self.name)
-            self.slug = f"{base_slug}-{str(self.id)[:8]}" if self.id else base_slug
-        super().save(*args, **kwargs)
+            # Include part of UUID for uniqueness hint
+            if self.id:
+                base_slug = f"{base_slug}-{str(self.id)[:8]}"
+            self.slug = generate_unique_slug(base_slug, Product, self)
+        
+        # Retry loop to handle race conditions
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except IntegrityError as e:
+                if 'slug' in str(e).lower() and attempt < max_retries - 1:
+                    base_slug = slugify(self.name)
+                    self.slug = generate_unique_slug(base_slug, Product, self)
+                else:
+                    raise
     
     @property
     def is_on_sale(self):
@@ -220,8 +302,20 @@ class ProductAttribute(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
+            base_slug = slugify(self.name)
+            self.slug = generate_unique_slug(base_slug, ProductAttribute, self)
+        
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except IntegrityError as e:
+                if 'slug' in str(e).lower() and attempt < max_retries - 1:
+                    base_slug = slugify(self.name)
+                    self.slug = generate_unique_slug(base_slug, ProductAttribute, self)
+                else:
+                    raise
 
 
 class ProductAttributeValue(models.Model):
@@ -306,6 +400,8 @@ class ProductVariantAttribute(models.Model):
 class ProductTag(models.Model):
     """Tags for products."""
     
+    # Tag name has max 50 chars - enforced by max_length
+    # This prevents DoS via extremely long tag names
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(max_length=60, unique=True, blank=True)
@@ -320,8 +416,20 @@ class ProductTag(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
+            base_slug = slugify(self.name)
+            self.slug = generate_unique_slug(base_slug, ProductTag, self)
+        
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except IntegrityError as e:
+                if 'slug' in str(e).lower() and attempt < max_retries - 1:
+                    base_slug = slugify(self.name)
+                    self.slug = generate_unique_slug(base_slug, ProductTag, self)
+                else:
+                    raise
 
 
 class ProductTagMapping(models.Model):

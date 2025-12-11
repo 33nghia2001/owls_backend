@@ -172,6 +172,11 @@ class ProductDetailSerializer(serializers.ModelSerializer):
 
 class ProductCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating products."""
+    
+    # DoS Prevention: Limit tags per product and tag name length
+    MAX_TAGS_PER_PRODUCT = 10
+    MAX_TAG_LENGTH = 50
+    
     images = ProductImageSerializer(many=True, read_only=True)
     uploaded_images = serializers.ListField(
         child=serializers.ImageField(),
@@ -179,9 +184,10 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
         required=False
     )
     tags = serializers.ListField(
-        child=serializers.CharField(),
+        child=serializers.CharField(max_length=MAX_TAG_LENGTH),
         write_only=True,
-        required=False
+        required=False,
+        max_length=MAX_TAGS_PER_PRODUCT  # Limit number of tags
     )
     
     class Meta:
@@ -194,6 +200,32 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
             'images', 'uploaded_images', 'tags'
         ]
         read_only_fields = ['id', 'slug']
+    
+    def validate_tags(self, value):
+        """
+        Validate tags to prevent DoS:
+        - Max 10 tags per product
+        - Max 50 chars per tag name
+        - Remove duplicates
+        """
+        if not value:
+            return value
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_tags = []
+        for tag in value:
+            tag_lower = tag.strip().lower()
+            if tag_lower and tag_lower not in seen:
+                seen.add(tag_lower)
+                unique_tags.append(tag.strip())
+        
+        if len(unique_tags) > self.MAX_TAGS_PER_PRODUCT:
+            raise serializers.ValidationError(
+                f"Maximum {self.MAX_TAGS_PER_PRODUCT} tags allowed per product."
+            )
+        
+        return unique_tags
     
     def validate_description(self, value):
         """Sanitize HTML in product description to prevent XSS attacks."""

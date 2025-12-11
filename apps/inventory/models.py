@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 import uuid
 
 
@@ -37,6 +38,32 @@ class Inventory(models.Model):
         db_table = 'inventory'
         verbose_name = 'Inventory'
         verbose_name_plural = 'Inventories'
+    
+    def clean(self):
+        """
+        Validate inventory constraints:
+        - Must have either product OR variant (not both, not neither)
+        - Product with variants CANNOT have its own inventory (Ghost Inventory prevention)
+        """
+        super().clean()
+        
+        # Must have exactly one of product or variant
+        if self.product and self.variant:
+            raise ValidationError("Inventory cannot be linked to both product and variant.")
+        if not self.product and not self.variant:
+            raise ValidationError("Inventory must be linked to either a product or variant.")
+        
+        # CRITICAL: Prevent Ghost Inventory
+        # If this is a product-level inventory, ensure the product has NO variants
+        if self.product and self.product.variants.exists():
+            raise ValidationError(
+                f"Cannot create inventory for product '{self.product.name}' because it has variants. "
+                "Inventory must be managed at the variant level."
+            )
+    
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
     
     def __str__(self):
         if self.product:

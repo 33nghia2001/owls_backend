@@ -1,8 +1,43 @@
 from django.db import models
 from django.conf import settings
 from django.utils.text import slugify
+from django.db import IntegrityError
 from phonenumber_field.modelfields import PhoneNumberField
 import uuid
+import secrets
+
+
+def generate_unique_slug(base_slug, model_class, existing_instance=None):
+    """
+    Generate a unique slug with retry logic to handle race conditions.
+    Similar to order number generation pattern.
+    
+    Args:
+        base_slug: The initial slug to try
+        model_class: The Django model class to check uniqueness against
+        existing_instance: If updating, exclude this instance from uniqueness check
+    
+    Returns:
+        A unique slug string
+    """
+    slug = base_slug
+    max_retries = 10
+    
+    for attempt in range(max_retries):
+        # Build queryset to check for duplicates
+        qs = model_class.objects.filter(slug=slug)
+        if existing_instance and existing_instance.pk:
+            qs = qs.exclude(pk=existing_instance.pk)
+        
+        if not qs.exists():
+            return slug
+        
+        # Collision found, add random suffix
+        suffix = secrets.token_hex(3)  # 6 hex chars
+        slug = f"{base_slug}-{suffix}"
+    
+    # Last resort: use UUID
+    return f"{base_slug}-{uuid.uuid4().hex[:8]}"
 
 
 class Vendor(models.Model):
@@ -70,8 +105,22 @@ class Vendor(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.shop_name)
-        super().save(*args, **kwargs)
+            base_slug = slugify(self.shop_name)
+            self.slug = generate_unique_slug(base_slug, Vendor, self)
+        
+        # Retry loop to handle race conditions
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except IntegrityError as e:
+                if 'slug' in str(e).lower() and attempt < max_retries - 1:
+                    # Slug collision during concurrent request, regenerate
+                    base_slug = slugify(self.shop_name)
+                    self.slug = generate_unique_slug(base_slug, Vendor, self)
+                else:
+                    raise
 
 
 class VendorBankAccount(models.Model):
