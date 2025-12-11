@@ -65,6 +65,28 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({'message': 'Successfully logged out.'})
         except Exception:
             return Response({'message': 'Logged out.'})
+    
+    @action(detail=False, methods=['post'])
+    def token_refresh(self, request):
+        """Refresh access token using refresh token."""
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response(
+                {'detail': 'Refresh token is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            refresh = RefreshToken(refresh_token)
+            return Response({
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),  # Return new refresh token if ROTATE_REFRESH_TOKENS is True
+            })
+        except Exception as e:
+            return Response(
+                {'detail': 'Invalid or expired refresh token.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
 
 
 class UserViewSet(viewsets.ModelViewSet):

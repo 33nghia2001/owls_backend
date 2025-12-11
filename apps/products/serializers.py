@@ -105,14 +105,21 @@ class ProductListSerializer(serializers.ModelSerializer):
     primary_image = serializers.SerializerMethodField()
     is_on_sale = serializers.ReadOnlyField()
     discount_percentage = serializers.ReadOnlyField()
+    has_variants = serializers.SerializerMethodField()
     
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'slug', 'price', 'compare_price', 'is_on_sale',
             'discount_percentage', 'primary_image', 'vendor_name', 'category_name',
-            'rating', 'review_count', 'sold_count', 'is_featured'
+            'rating', 'review_count', 'sold_count', 'is_featured', 'has_variants'
         ]
+    
+    def get_has_variants(self, obj):
+        """Check if product has active variants."""
+        # Use prefetched variants if available
+        variants = obj.variants.all() if hasattr(obj, '_prefetched_objects_cache') else obj.variants.filter(is_active=True)
+        return any(v.is_active for v in variants) if hasattr(obj, '_prefetched_objects_cache') else variants.exists()
     
     def get_primary_image(self, obj):
         """
