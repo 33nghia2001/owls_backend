@@ -76,14 +76,16 @@ class OrderViewSet(viewsets.ModelViewSet):
             'variant'
         ).order_by('product__id', 'variant__id')
         
-        # 1. CHECK INVENTORY BEFORE CREATING ORDER
+        # 1. CHECK INVENTORY AND VALIDATE PRICES BEFORE CREATING ORDER
         inventory_updates = []  # Store inventory objects to update later
         for item in cart_items:
             # Get inventory for variant or product
             if item.variant:
                 inventory = Inventory.objects.filter(variant=item.variant).select_for_update().first()
+                current_price = item.variant.price
             else:
                 inventory = Inventory.objects.filter(product=item.product).select_for_update().first()
+                current_price = item.product.price
             
             if not inventory:
                 return Response(
@@ -94,6 +96,13 @@ class OrderViewSet(viewsets.ModelViewSet):
             if inventory.available_quantity < item.quantity:
                 return Response(
                     {'error': f'Sản phẩm "{item.product.name}" không đủ số lượng tồn kho. Còn lại: {inventory.available_quantity}.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate price hasn't changed (prevent stale price exploitation)
+            if item.unit_price != current_price:
+                return Response(
+                    {'error': f'Giá sản phẩm "{item.product.name}" đã thay đổi từ {item.unit_price} thành {current_price}. Vui lòng cập nhật giỏ hàng.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -204,8 +213,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         )
     
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def cancel(self, request, pk=None):
-        """Cancel an order."""
+        """Cancel an order and release reserved inventory."""
         order = self.get_object()
         
         if order.status not in ['pending', 'confirmed']:
@@ -214,6 +224,32 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # 1. Release reserved inventory for each order item
+        for item in order.items.select_related('product', 'variant').all():
+            # Find the corresponding inventory
+            if item.variant:
+                inventory = Inventory.objects.filter(variant=item.variant).select_for_update().first()
+            else:
+                inventory = Inventory.objects.filter(product=item.product).select_for_update().first()
+            
+            if inventory:
+                # Release the reserved quantity
+                Inventory.objects.filter(pk=inventory.pk).update(
+                    reserved_quantity=F('reserved_quantity') - item.quantity
+                )
+                
+                # Log the inventory movement
+                InventoryMovement.objects.create(
+                    inventory=inventory,
+                    movement_type='released',
+                    quantity=item.quantity,
+                    reference_type='order_cancellation',
+                    reference_id=str(order.id),
+                    note=f'Released stock from cancelled order {order.order_number}',
+                    created_by=request.user
+                )
+        
+        # 2. Update order status
         order.status = 'cancelled'
         order.cancelled_at = timezone.now()
         order.save()

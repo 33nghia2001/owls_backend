@@ -37,6 +37,7 @@ THIRD_PARTY_APPS = [
     'django_celery_results',
     'django_celery_beat',
     'debug_toolbar',
+    'channels',  # Django Channels for WebSocket support
 ]
 
 LOCAL_APPS = [
@@ -201,6 +202,18 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
+# Celery Beat Schedule (Periodic Tasks)
+CELERY_BEAT_SCHEDULE = {
+    'cancel-expired-orders': {
+        'task': 'apps.orders.tasks.cancel_expired_pending_orders',
+        'schedule': 300.0,  # Run every 5 minutes (300 seconds)
+    },
+    'update-daily-statistics': {
+        'task': 'apps.orders.tasks.update_order_statistics',
+        'schedule': 86400.0,  # Run once per day (24 hours)
+    },
+}
+
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
@@ -229,5 +242,16 @@ VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default='http://localhost:8000/api/pa
 # Shipping Settings
 DEFAULT_SHIPPING_COST = env.int('DEFAULT_SHIPPING_COST', default=30000)  # VND
 FREE_SHIPPING_THRESHOLD = env.int('FREE_SHIPPING_THRESHOLD', default=500000)  # Free shipping for orders >= 500k VND
+
+# Django Channels (WebSocket) Configuration
+ASGI_APPLICATION = 'backend.asgi.application'
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [env('REDIS_URL', default='redis://localhost:6379/0')],
+        },
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
