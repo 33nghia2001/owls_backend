@@ -6,6 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import F
+from django.conf import settings
 
 from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import (
@@ -69,10 +70,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
         
         # Get cart items with optimized query
+        # Sort by product_id and variant_id to prevent deadlock when using select_for_update
         cart_items = cart.items.select_related(
             'product__vendor',
             'variant'
-        ).all()
+        ).order_by('product__id', 'variant__id')
         
         # 1. CHECK INVENTORY BEFORE CREATING ORDER
         inventory_updates = []  # Store inventory objects to update later
@@ -99,7 +101,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         # Calculate totals
         subtotal = cart.subtotal
-        shipping_cost = 30000  # Default shipping cost (can be dynamic)
+        shipping_cost = getattr(settings, 'DEFAULT_SHIPPING_COST', 30000)
+        # Free shipping for orders over threshold (if configured)
+        free_shipping_threshold = getattr(settings, 'FREE_SHIPPING_THRESHOLD', None)
+        if free_shipping_threshold and subtotal >= free_shipping_threshold:
+            shipping_cost = 0
         discount_amount = 0
         
         # Apply coupon if provided

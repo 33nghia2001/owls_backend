@@ -226,4 +226,8 @@ VNPAY_HASH_SECRET = env('VNPAY_HASH_SECRET', default='')
 VNPAY_URL = env('VNPAY_URL', default='https://sandbox.vnpayment.vn/paymentv2/vpcpay.html')
 VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default='http://localhost:8000/api/payments/vnpay-return/')
 
+# Shipping Settings
+DEFAULT_SHIPPING_COST = env.int('DEFAULT_SHIPPING_COST', default=30000)  # VND
+FREE_SHIPPING_THRESHOLD = env.int('FREE_SHIPPING_THRESHOLD', default=500000)  # Free shipping for orders >= 500k VND
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

@@ -14,7 +14,7 @@ class VNPayService:
         self.url = settings.VNPAY_URL
         self.return_url = settings.VNPAY_RETURN_URL
     
-    def create_payment_url(self, order, return_url=None):
+    def create_payment_url(self, order, return_url=None, client_ip=None):
         """Create VNPay payment URL."""
         vnp_params = {
             'vnp_Version': '2.1.0',
@@ -27,7 +27,7 @@ class VNPayService:
             'vnp_OrderType': 'other',
             'vnp_Locale': 'vn',
             'vnp_ReturnUrl': return_url or self.return_url,
-            'vnp_IpAddr': '127.0.0.1',
+            'vnp_IpAddr': client_ip or '127.0.0.1',
             'vnp_CreateDate': datetime.now().strftime('%Y%m%d%H%M%S'),
         }
         

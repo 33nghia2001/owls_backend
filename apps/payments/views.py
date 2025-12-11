@@ -34,6 +34,15 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             'logs'
         ).order_by('-created_at')
     
+    def _get_client_ip(self, request):
+        """Get the real client IP address from request."""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
+        return ip
+    
     @action(detail=False, methods=['post'])
     def create_payment(self, request):
         """Create a payment for an order."""
@@ -147,9 +156,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             # Create VNPay payment URL
             vnpay_service = VNPayService()
             return_url = serializer.validated_data.get('return_url')
+            client_ip = self._get_client_ip(request)
             
             try:
-                payment_url = vnpay_service.create_payment_url(order, return_url)
+                payment_url = vnpay_service.create_payment_url(order, return_url, client_ip)
                 
                 payment.status = 'processing'
                 payment.save()
@@ -214,6 +224,22 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
+        # Idempotency check - prevent duplicate processing
+        if payment.status == 'completed':
+            return Response({
+                'success': True,
+                'message': 'Payment already processed',
+                'order_id': str(order.id)
+            })
+        
+        # Validate amount matches order total (VNPay sends amount * 100)
+        vnp_amount = int(params.get('vnp_Amount', 0)) / 100
+        if vnp_amount != float(order.total.amount):
+            return Response(
+                {'error': 'Amount mismatch'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Log callback
         response_code = params.get('vnp_ResponseCode')
         is_success = vnpay_service.is_success(response_code)
@@ -276,6 +302,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             try:
                 payment = Payment.objects.get(id=payment_id)
                 order = payment.order
+                
+                # Idempotency check - prevent duplicate processing
+                if payment.status == 'completed':
+                    return Response({'status': 'already_processed'})
                 
                 payment.status = 'completed'
                 payment.transaction_id = session.get('payment_intent', '')
