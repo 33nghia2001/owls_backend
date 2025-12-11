@@ -8,7 +8,9 @@ import bleach
 
 # Allowed HTML tags for product descriptions (prevent XSS)
 ALLOWED_HTML_TAGS = ['b', 'i', 'u', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a', 'span', 'div']
-ALLOWED_HTML_ATTRS = {'a': ['href', 'title'], 'span': ['class'], 'div': ['class']}
+# SECURITY: Do not allow 'class' attribute as it can enable CSS-based attacks
+# Only allow essential safe attributes
+ALLOWED_HTML_ATTRS = {'a': ['href', 'title']}
 
 
 class CategorySerializer(serializers.ModelSerializer):

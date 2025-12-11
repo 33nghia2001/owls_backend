@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import logout
 
@@ -10,6 +11,11 @@ from .serializers import (
     UserSerializer, UserRegistrationSerializer, UserLoginSerializer,
     ChangePasswordSerializer, AddressSerializer
 )
+
+
+class LoginRateThrottle(ScopedRateThrottle):
+    """Custom throttle for login attempts to prevent brute force."""
+    scope = 'login'
 
 
 class AuthViewSet(viewsets.ViewSet):
@@ -32,7 +38,7 @@ class AuthViewSet(viewsets.ViewSet):
             }
         }, status=status.HTTP_201_CREATED)
     
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], throttle_classes=[LoginRateThrottle])
     def login(self, request):
         """Login user and return tokens."""
         serializer = UserLoginSerializer(data=request.data)

@@ -185,6 +185,17 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # Rate limiting to prevent abuse
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',      # Unauthenticated users: 100 requests/hour
+        'user': '1000/hour',     # Authenticated users: 1000 requests/hour
+        'login': '5/minute',     # Login attempts: 5 per minute
+        'sensitive': '30/hour',  # Sensitive operations (coupon, checkout): 30/hour
+    },
 }
 
 SPECTACULAR_SETTINGS = {

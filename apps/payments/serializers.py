@@ -27,7 +27,8 @@ class CreatePaymentSerializer(serializers.Serializer):
     """Serializer for creating a payment."""
     order_id = serializers.UUIDField()
     method = serializers.ChoiceField(choices=Payment.Method.choices)
-    return_url = serializers.URLField(required=False)  # For redirect-based payments
+    # SECURITY: return_url removed to prevent Open Redirect attacks
+    # All redirects now use settings.FRONTEND_URL
 
 
 class VNPayCallbackSerializer(serializers.Serializer):

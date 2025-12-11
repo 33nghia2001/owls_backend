@@ -109,16 +109,20 @@ class ProductViewSet(viewsets.ModelViewSet):
         """Get product detail and increment view count (once per session)."""
         instance = self.get_object()
         
-        # Prevent view count spam using session
-        viewed_products = request.session.get('viewed_products', [])
-        product_id = str(instance.pk)
-        
-        if product_id not in viewed_products:
-            Product.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
-            viewed_products.append(product_id)
-            # Keep only last 100 viewed products in session
-            request.session['viewed_products'] = viewed_products[-100:]
-            request.session.modified = True
+        # SECURITY: Prevent DoS via view count spam
+        # Only count views for requests with an existing session (has session key)
+        # This prevents attackers from flooding the DB with write operations
+        # by sending sessionless requests
+        if request.session.session_key:
+            viewed_products = request.session.get('viewed_products', [])
+            product_id = str(instance.pk)
+            
+            if product_id not in viewed_products:
+                Product.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+                viewed_products.append(product_id)
+                # Keep only last 100 viewed products in session
+                request.session['viewed_products'] = viewed_products[-100:]
+                request.session.modified = True
         
         serializer = self.get_serializer(instance)
         return Response(serializer.data)

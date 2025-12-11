@@ -2,11 +2,17 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
 from .models import Coupon, CouponUsage
 from .serializers import CouponSerializer, ApplyCouponSerializer
+
+
+class SensitiveRateThrottle(ScopedRateThrottle):
+    """Custom throttle for sensitive operations like coupon validation."""
+    scope = 'sensitive'
 
 
 class CouponViewSet(viewsets.ReadOnlyModelViewSet):
@@ -17,7 +23,7 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return Coupon.objects.filter(is_active=True, is_public=True)
     
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], throttle_classes=[SensitiveRateThrottle])
     def validate(self, request):
         """Validate a coupon code."""
         serializer = ApplyCouponSerializer(data=request.data)

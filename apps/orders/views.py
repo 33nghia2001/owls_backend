@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import transaction
@@ -17,6 +18,11 @@ from apps.cart.models import Cart
 from apps.coupons.models import Coupon, CouponUsage
 from apps.vendors.permissions import IsApprovedVendor
 from apps.inventory.models import Inventory, InventoryMovement
+
+
+class SensitiveRateThrottle(ScopedRateThrottle):
+    """Custom throttle for sensitive operations like order creation."""
+    scope = 'sensitive'
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -47,6 +53,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             'status_history'
         ).order_by('-created_at')
     
+    def get_throttles(self):
+        """Apply stricter throttling for order creation."""
+        if self.action == 'create':
+            return [SensitiveRateThrottle()]
+        return super().get_throttles()
+    
     @transaction.atomic
     def create(self, request):
         """Create order from cart."""
@@ -76,8 +88,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             'variant'
         ).order_by('product__id', 'variant__id')
         
-        # 1. CHECK INVENTORY AND VALIDATE PRICES BEFORE CREATING ORDER
+        # 1. CHECK INVENTORY AND VALIDATE/UPDATE PRICES BEFORE CREATING ORDER
         inventory_updates = []  # Store inventory objects to update later
+        price_changes = []  # Track any price changes for user notification
+        
         for item in cart_items:
             # Get inventory for variant or product
             if item.variant:
@@ -99,17 +113,23 @@ class OrderViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Validate price hasn't changed (prevent stale price exploitation)
+            # Auto-update cart item price if changed (better UX than blocking)
             if item.unit_price != current_price:
-                return Response(
-                    {'error': f'Giá sản phẩm "{item.product.name}" đã thay đổi từ {item.unit_price} thành {current_price}. Vui lòng cập nhật giỏ hàng.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                old_price = item.unit_price
+                item.unit_price = current_price
+                item.save(update_fields=['unit_price'])
+                price_changes.append({
+                    'product': item.product.name,
+                    'old_price': str(old_price),
+                    'new_price': str(current_price)
+                })
             
             inventory_updates.append((item, inventory))
         
-        # Calculate totals
+        # Recalculate cart subtotal after price updates
+        cart.refresh_from_db()
         subtotal = cart.subtotal
+        
         shipping_cost = getattr(settings, 'DEFAULT_SHIPPING_COST', 30000)
         # Free shipping for orders over threshold (if configured)
         free_shipping_threshold = getattr(settings, 'FREE_SHIPPING_THRESHOLD', None)
@@ -225,10 +245,13 @@ class OrderViewSet(viewsets.ModelViewSet):
                 discount_applied=order.discount_amount
             )
         
-        return Response(
-            OrderDetailSerializer(order).data,
-            status=status.HTTP_201_CREATED
-        )
+        # Build response with price change notifications if any
+        response_data = OrderDetailSerializer(order).data
+        if price_changes:
+            response_data['price_updates'] = price_changes
+            response_data['message'] = 'Đơn hàng đã được tạo. Lưu ý: một số sản phẩm đã được cập nhật giá mới.'
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
     
     @action(detail=True, methods=['post'])
     @transaction.atomic

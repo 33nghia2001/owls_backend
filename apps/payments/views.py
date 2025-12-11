@@ -110,10 +110,8 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                         'quantity': 1,
                     }],
                     mode='payment',
-                    success_url=serializer.validated_data.get(
-                        'return_url',
-                        f'{settings.FRONTEND_URL}/checkout/success'
-                    ) + f'?order_id={order.id}',
+                    # SECURITY: Always use FRONTEND_URL to prevent Open Redirect
+                    success_url=f'{settings.FRONTEND_URL}/checkout/success?order_id={order.id}',
                     cancel_url=f'{settings.FRONTEND_URL}/checkout/cancel',
                     metadata={
                         'order_id': str(order.id),
@@ -156,11 +154,11 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         elif method == 'vnpay':
             # Create VNPay payment URL
             vnpay_service = VNPayService()
-            return_url = serializer.validated_data.get('return_url')
+            # SECURITY: Use server-configured return URL to prevent Open Redirect
             client_ip = self._get_client_ip(request)
             
             try:
-                payment_url = vnpay_service.create_payment_url(order, return_url, client_ip)
+                payment_url = vnpay_service.create_payment_url(order, None, client_ip)
                 
                 payment.status = 'processing'
                 payment.save()

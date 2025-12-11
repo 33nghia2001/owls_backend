@@ -1,13 +1,13 @@
 """
 Custom authentication middleware for Django Channels WebSocket.
-Supports both JWT token and Ticket-based authentication.
+Uses secure Ticket-based authentication only.
 
-Recommended: Use ticket-based auth for better security.
+Usage:
 - Client calls POST /api/messaging/ws-ticket/ to get a one-time ticket
 - Client connects with ws://domain/ws/chat/123/?ticket=abc123
 
-Fallback: JWT token via query string (less secure - token visible in logs)
-- ws://domain/ws/chat/123/?token=eyJ...
+SECURITY: JWT token via query string is disabled in production
+as tokens in URLs are logged by servers, proxies, and browsers.
 """
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
@@ -16,6 +16,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.conf import settings
 from urllib.parse import parse_qs
 import logging
 import secrets
@@ -89,30 +90,27 @@ class JWTAuthMiddleware(BaseMiddleware):
     """
     Custom middleware for WebSocket authentication.
     
-    Supports two methods (in order of preference):
-    1. Ticket-based auth (more secure): ?ticket=abc123
-    2. JWT token auth (fallback): ?token=eyJ...
+    SECURITY: Only ticket-based authentication is allowed.
+    JWT tokens in URLs are a security risk (logged by servers/proxies).
     """
     
     async def __call__(self, scope, receive, send):
-        # Parse query string to get token
+        # Parse query string to get ticket
         query_string = scope.get('query_string', b'').decode('utf-8')
         query_params = parse_qs(query_string)
         
-        # Try ticket-based auth first (preferred, more secure)
+        # Only ticket-based auth is allowed (secure)
         ticket_list = query_params.get('ticket', [])
         if ticket_list:
             scope['user'] = await get_user_from_ticket(ticket_list[0])
             return await super().__call__(scope, receive, send)
         
-        # Fallback to JWT token auth
+        # Reject JWT token in URL - security risk in production
         token_list = query_params.get('token', [])
         if token_list:
-            logger.warning("WebSocket using JWT token in URL - consider using ticket auth instead")
-            scope['user'] = await get_user_from_token(token_list[0])
-            return await super().__call__(scope, receive, send)
+            logger.warning("JWT token in WebSocket URL rejected - use ticket auth instead")
         
-        # No auth provided
+        # No valid auth provided
         scope['user'] = AnonymousUser()
         return await super().__call__(scope, receive, send)
 
