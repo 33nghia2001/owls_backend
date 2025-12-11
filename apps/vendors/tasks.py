@@ -66,12 +66,13 @@ def calculate_vendor_available_balance(vendor_id):
     Returns the sum of all AVAILABLE (not yet paid out) balances.
     """
     from decimal import Decimal
+    from django.db.models import Sum
     
     available_total = VendorBalance.objects.filter(
         vendor_id=vendor_id,
         status=VendorBalance.Status.AVAILABLE
     ).aggregate(
-        total=models.Sum('net_amount')
+        total=Sum('net_amount')
     )['total'] or Decimal('0.00')
     
     return str(available_total)
