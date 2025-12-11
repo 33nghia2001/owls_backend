@@ -1,3 +1,77 @@
-from django.shortcuts import render
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
-# Create your views here.
+from .models import Coupon, CouponUsage
+from .serializers import CouponSerializer, ApplyCouponSerializer
+
+
+class CouponViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for coupons."""
+    serializer_class = CouponSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        return Coupon.objects.filter(is_active=True, is_public=True)
+    
+    @action(detail=False, methods=['post'])
+    def validate(self, request):
+        """Validate a coupon code."""
+        serializer = ApplyCouponSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        code = serializer.validated_data['code']
+        order_amount = serializer.validated_data.get('order_amount', 0)
+        
+        try:
+            coupon = Coupon.objects.get(code__iexact=code)
+        except Coupon.DoesNotExist:
+            return Response(
+                {'valid': False, 'error': 'Coupon not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not coupon.is_valid():
+            return Response(
+                {'valid': False, 'error': 'Coupon is expired or inactive.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check minimum order amount
+        if coupon.min_order_amount and order_amount < coupon.min_order_amount.amount:
+            return Response({
+                'valid': False,
+                'error': f'Minimum order amount is {coupon.min_order_amount}.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check user usage limit
+        if request.user.is_authenticated:
+            user_usage = CouponUsage.objects.filter(
+                coupon=coupon, user=request.user
+            ).count()
+            if user_usage >= coupon.usage_limit_per_user:
+                return Response({
+                    'valid': False,
+                    'error': 'You have already used this coupon.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        discount = coupon.calculate_discount(order_amount) if order_amount else 0
+        
+        return Response({
+            'valid': True,
+            'coupon': CouponSerializer(coupon).data,
+            'discount_amount': discount
+        })
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_coupons(self, request):
+        """Get coupons available for current user."""
+        public_coupons = Coupon.objects.filter(is_active=True, is_public=True)
+        eligible_coupons = request.user.eligible_coupons.filter(is_active=True)
+        
+        all_coupons = (public_coupons | eligible_coupons).distinct()
+        valid_coupons = [c for c in all_coupons if c.is_valid()]
+        
+        serializer = CouponSerializer(valid_coupons, many=True)
+        return Response(serializer.data)

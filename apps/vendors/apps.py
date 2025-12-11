@@ -2,4 +2,6 @@ from django.apps import AppConfig
 
 
 class VendorsConfig(AppConfig):
-    name = 'vendors'
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'apps.vendors'
+    verbose_name = 'Vendors'
