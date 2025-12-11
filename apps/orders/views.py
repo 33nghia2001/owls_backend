@@ -31,7 +31,18 @@ class OrderViewSet(viewsets.ModelViewSet):
         return OrderDetailSerializer
     
     def get_queryset(self):
-        return Order.objects.filter(user=self.request.user).prefetch_related('items')
+        # Optimized query with select_related and prefetch_related
+        return Order.objects.filter(
+            user=self.request.user
+        ).select_related(
+            'user',
+            'coupon'
+        ).prefetch_related(
+            'items__product__vendor',
+            'items__product__images',
+            'items__variant',
+            'status_history'
+        ).order_by('-created_at')
     
     @transaction.atomic
     def create(self, request):
@@ -102,8 +113,13 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.billing_postal_code = data.get('billing_postal_code', '')
             order.save()
         
-        # Create order items from cart
-        for cart_item in cart.items.all():
+        # Create order items from cart with optimized query
+        cart_items = cart.items.select_related(
+            'product__vendor',
+            'variant'
+        ).all()
+        
+        for cart_item in cart_items:
             OrderItem.objects.create(
                 order=order,
                 vendor=cart_item.product.vendor,
@@ -176,9 +192,16 @@ class VendorOrderViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['created_at']
     
     def get_queryset(self):
+        # Optimized query to avoid N+1
         return OrderItem.objects.filter(
             vendor=self.request.user.vendor_profile
-        ).select_related('order').order_by('-created_at')
+        ).select_related(
+            'order__user',
+            'product__category',
+            'variant'
+        ).prefetch_related(
+            'product__images'
+        ).order_by('-created_at')
     
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):

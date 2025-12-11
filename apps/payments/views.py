@@ -23,7 +23,15 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        return Payment.objects.filter(user=self.request.user)
+        # Optimized query with select_related
+        return Payment.objects.filter(
+            user=self.request.user
+        ).select_related(
+            'order',
+            'user'
+        ).prefetch_related(
+            'logs'
+        ).order_by('-created_at')
     
     @action(detail=False, methods=['post'])
     def create_payment(self, request):

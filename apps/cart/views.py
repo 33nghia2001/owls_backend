@@ -18,14 +18,18 @@ class CartViewSet(viewsets.ViewSet):
     def get_cart(self, request):
         """Get or create cart for user or session."""
         if request.user.is_authenticated:
-            cart, created = Cart.objects.get_or_create(user=request.user)
+            cart, created = Cart.objects.prefetch_related(
+                'items__product__vendor',
+                'items__product__images',
+                'items__variant'
+            ).get_or_create(user=request.user)
             # Merge session cart if exists
             session_key = request.session.session_key
             if session_key:
                 try:
                     session_cart = Cart.objects.get(session_key=session_key, user__isnull=True)
                     # Merge items
-                    for item in session_cart.items.all():
+                    for item in session_cart.items.select_related('product', 'variant').all():
                         existing = cart.items.filter(
                             product=item.product, 
                             variant=item.variant
@@ -42,7 +46,11 @@ class CartViewSet(viewsets.ViewSet):
         else:
             if not request.session.session_key:
                 request.session.create()
-            cart, created = Cart.objects.get_or_create(
+            cart, created = Cart.objects.prefetch_related(
+                'items__product__vendor',
+                'items__product__images',
+                'items__variant'
+            ).get_or_create(
                 session_key=request.session.session_key,
                 user__isnull=True
             )
