@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
 from django.conf import settings
+from django.db import transaction
 import stripe
 
 from .models import Payment, PaymentLog
@@ -186,6 +187,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         )
     
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
+    @transaction.atomic
     def vnpay_return(self, request):
         """Handle VNPay return callback."""
         params = dict(request.GET)
@@ -253,6 +255,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             })
     
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
+    @transaction.atomic
     def stripe_webhook(self, request):
         """Handle Stripe webhook events."""
         payload = request.body

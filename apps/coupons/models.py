@@ -114,8 +114,11 @@ class CouponUsage(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='coupon_usages'
+        related_name='coupon_usages',
+        null=True,
+        blank=True
     )
+    guest_email = models.EmailField(blank=True, db_index=True)  # For guest checkout tracking
     order = models.ForeignKey(
         'orders.Order',
         on_delete=models.SET_NULL,

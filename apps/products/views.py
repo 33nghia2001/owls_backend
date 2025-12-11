@@ -102,9 +102,20 @@ class ProductViewSet(viewsets.ModelViewSet):
         return queryset
     
     def retrieve(self, request, *args, **kwargs):
-        """Get product detail and increment view count."""
+        """Get product detail and increment view count (once per session)."""
         instance = self.get_object()
-        Product.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+        
+        # Prevent view count spam using session
+        viewed_products = request.session.get('viewed_products', [])
+        product_id = str(instance.pk)
+        
+        if product_id not in viewed_products:
+            Product.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+            viewed_products.append(product_id)
+            # Keep only last 100 viewed products in session
+            request.session['viewed_products'] = viewed_products[-100:]
+            request.session.modified = True
+        
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
     

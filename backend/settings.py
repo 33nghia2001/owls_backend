@@ -150,12 +150,16 @@ else:
 
 AUTH_USER_MODEL = 'users.Users'
 
-CORS_ALLOWED_ORIGINS = [
+# CORS Settings - Load from environment for production flexibility
+CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-]
+])
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+])
 
 INTERNAL_IPS = ["127.0.0.1"]
 

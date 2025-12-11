@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import F
 
 from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import (
@@ -14,6 +15,7 @@ from .serializers import (
 from apps.cart.models import Cart
 from apps.coupons.models import Coupon
 from apps.vendors.permissions import IsApprovedVendor
+from apps.inventory.models import Inventory, InventoryMovement
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -66,6 +68,35 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Get cart items with optimized query
+        cart_items = cart.items.select_related(
+            'product__vendor',
+            'variant'
+        ).all()
+        
+        # 1. CHECK INVENTORY BEFORE CREATING ORDER
+        inventory_updates = []  # Store inventory objects to update later
+        for item in cart_items:
+            # Get inventory for variant or product
+            if item.variant:
+                inventory = Inventory.objects.filter(variant=item.variant).select_for_update().first()
+            else:
+                inventory = Inventory.objects.filter(product=item.product).select_for_update().first()
+            
+            if not inventory:
+                return Response(
+                    {'error': f'Sản phẩm "{item.product.name}" chưa được thiết lập kho.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if inventory.available_quantity < item.quantity:
+                return Response(
+                    {'error': f'Sản phẩm "{item.product.name}" không đủ số lượng tồn kho. Còn lại: {inventory.available_quantity}.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            inventory_updates.append((item, inventory))
+        
         # Calculate totals
         subtotal = cart.subtotal
         shipping_cost = 30000  # Default shipping cost (can be dynamic)
@@ -113,13 +144,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.billing_postal_code = data.get('billing_postal_code', '')
             order.save()
         
-        # Create order items from cart with optimized query
-        cart_items = cart.items.select_related(
-            'product__vendor',
-            'variant'
-        ).all()
-        
-        for cart_item in cart_items:
+        # 2. CREATE ORDER ITEMS AND RESERVE INVENTORY
+        for cart_item, inventory in inventory_updates:
+            # Create order item
             OrderItem.objects.create(
                 order=order,
                 vendor=cart_item.product.vendor,
@@ -131,6 +158,22 @@ class OrderViewSet(viewsets.ModelViewSet):
                 quantity=cart_item.quantity,
                 unit_price=cart_item.unit_price,
                 commission_rate=cart_item.product.vendor.commission_rate
+            )
+            
+            # Reserve inventory (using F() to avoid race conditions)
+            Inventory.objects.filter(pk=inventory.pk).update(
+                reserved_quantity=F('reserved_quantity') + cart_item.quantity
+            )
+            
+            # Log inventory movement
+            InventoryMovement.objects.create(
+                inventory=inventory,
+                movement_type='reserved',
+                quantity=cart_item.quantity,
+                reference_type='order',
+                reference_id=str(order.id),
+                note=f'Reserved for order {order.order_number}',
+                created_by=request.user
             )
         
         # Create status history

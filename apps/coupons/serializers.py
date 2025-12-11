@@ -22,6 +22,7 @@ class ApplyCouponSerializer(serializers.Serializer):
     """Serializer for applying coupon."""
     code = serializers.CharField(max_length=50)
     order_amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    email = serializers.EmailField(required=False, help_text="Required for guest checkout")
 
 
 class CouponUsageSerializer(serializers.ModelSerializer):

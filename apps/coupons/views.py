@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 
 from .models import Coupon, CouponUsage
 from .serializers import CouponSerializer, ApplyCouponSerializer
@@ -23,6 +25,7 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
         
         code = serializer.validated_data['code']
         order_amount = serializer.validated_data.get('order_amount', 0)
+        guest_email = serializer.validated_data.get('email', '')
         
         try:
             coupon = Coupon.objects.get(code__iexact=code)
@@ -54,6 +57,31 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
                 return Response({
                     'valid': False,
                     'error': 'You have already used this coupon.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Guest user - require and validate email for tracking
+            if not guest_email:
+                return Response({
+                    'valid': False,
+                    'error': 'Email is required for guest checkout.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                validate_email(guest_email)
+            except ValidationError:
+                return Response({
+                    'valid': False,
+                    'error': 'Invalid email address.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check guest email usage
+            guest_usage = CouponUsage.objects.filter(
+                coupon=coupon, guest_email__iexact=guest_email
+            ).count()
+            if guest_usage >= coupon.usage_limit_per_user:
+                return Response({
+                    'valid': False,
+                    'error': 'This email has already used this coupon.'
                 }, status=status.HTTP_400_BAD_REQUEST)
         
         discount = coupon.calculate_discount(order_amount) if order_amount else 0
