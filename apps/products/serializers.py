@@ -4,6 +4,11 @@ from .models import (
     ProductAttributeValue, ProductVariant, ProductVariantAttribute, ProductTag
 )
 from backend.validators import validate_image_upload
+import bleach
+
+# Allowed HTML tags for product descriptions (prevent XSS)
+ALLOWED_HTML_TAGS = ['b', 'i', 'u', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a', 'span', 'div']
+ALLOWED_HTML_ATTRS = {'a': ['href', 'title'], 'span': ['class'], 'div': ['class']}
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -175,6 +180,18 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
             'images', 'uploaded_images', 'tags'
         ]
         read_only_fields = ['id', 'slug']
+    
+    def validate_description(self, value):
+        """Sanitize HTML in product description to prevent XSS attacks."""
+        if value:
+            return bleach.clean(value, tags=ALLOWED_HTML_TAGS, attributes=ALLOWED_HTML_ATTRS, strip=True)
+        return value
+    
+    def validate_short_description(self, value):
+        """Sanitize HTML in short description to prevent XSS attacks."""
+        if value:
+            return bleach.clean(value, tags=ALLOWED_HTML_TAGS, attributes=ALLOWED_HTML_ATTRS, strip=True)
+        return value
     
     def create(self, validated_data):
         uploaded_images = validated_data.pop('uploaded_images', [])

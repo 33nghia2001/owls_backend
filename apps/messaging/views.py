@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status, serializers
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.db.models import Q
 
 from .models import Conversation, Message
+from .middleware import create_ws_ticket
 from apps.vendors.models import Vendor
 from backend.validators import validate_attachment_upload
 
@@ -176,3 +177,25 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation.is_archived = True
         conversation.save()
         return Response({'message': 'Conversation archived.'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def get_ws_ticket(request):
+    """
+    Get a one-time ticket for WebSocket authentication.
+    
+    This is more secure than passing JWT token in the URL because:
+    1. Ticket is one-time use (deleted after first connection)
+    2. Ticket expires after 60 seconds
+    3. Ticket is not a valid auth token for other API endpoints
+    
+    Usage:
+    1. POST /api/messaging/ws-ticket/
+    2. Use ticket in WebSocket URL: ws://domain/ws/chat/123/?ticket=<ticket>
+    """
+    ticket = create_ws_ticket(request.user.id)
+    return Response({
+        'ticket': ticket,
+        'expires_in': 60  # seconds
+    })

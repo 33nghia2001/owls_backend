@@ -37,8 +37,17 @@ def cancel_expired_pending_orders():
     for order in expired_orders:
         try:
             with transaction.atomic():
+                # CRITICAL: Lock and re-fetch order to prevent race condition
+                # If payment was just processed, status will no longer be 'pending'
+                current_order = Order.objects.select_for_update().get(id=order.id)
+                
+                # Skip if order was already processed (e.g., payment just completed)
+                if current_order.status != 'pending' or current_order.payment_status != 'pending':
+                    logger.info(f"Skipping order {order.order_number} - already processed")
+                    continue
+                
                 # Release reserved inventory for each order item
-                for item in order.items.all():
+                for item in current_order.items.all():
                     # Find the corresponding inventory
                     if item.variant:
                         inventory = Inventory.objects.filter(
@@ -61,22 +70,22 @@ def cancel_expired_pending_orders():
                             movement_type='released',
                             quantity=item.quantity,
                             reference_type='order_expired',
-                            reference_id=str(order.id),
-                            note=f'Auto-released from expired order {order.order_number}'
+                            reference_id=str(current_order.id),
+                            note=f'Auto-released from expired order {current_order.order_number}'
                         )
                 
                 # Update order status
-                order.status = 'cancelled'
-                order.cancelled_at = timezone.now()
-                order.note = 'Auto-cancelled due to payment timeout (30 minutes)'
-                order.save()
+                current_order.status = 'cancelled'
+                current_order.cancelled_at = timezone.now()
+                current_order.note = 'Auto-cancelled due to payment timeout (30 minutes)'
+                current_order.save()
                 
                 # Update all items
-                order.items.update(status='cancelled')
+                current_order.items.update(status='cancelled')
                 
                 # Create status history
                 OrderStatusHistory.objects.create(
-                    order=order,
+                    order=current_order,
                     status='cancelled',
                     note='Auto-cancelled: Payment not received within 30 minutes'
                 )

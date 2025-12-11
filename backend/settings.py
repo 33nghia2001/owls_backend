@@ -155,6 +155,11 @@ else:
 AUTH_USER_MODEL = 'users.Users'
 
 # CORS Settings - Load from environment for production flexibility
+# SECURITY WARNING: In production, ensure CORS_ALLOWED_ORIGINS only contains
+# your actual frontend domain(s). NEVER use '*' with CORS_ALLOW_CREDENTIALS=True
+# as this creates a severe security vulnerability (CSRF/credential theft).
+# Example for production .env:
+#   CORS_ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",

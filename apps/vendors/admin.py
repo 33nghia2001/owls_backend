@@ -14,11 +14,30 @@ class VendorAdmin(admin.ModelAdmin):
     actions = ['approve_vendors', 'suspend_vendors']
     
     def approve_vendors(self, request, queryset):
-        queryset.update(status='approved', approved_at=timezone.now())
+        """Approve vendors and update their user role."""
+        for vendor in queryset:
+            vendor.status = 'approved'
+            vendor.approved_at = timezone.now()
+            vendor.save()
+            
+            # Update user role to vendor when approved
+            vendor.user.role = 'vendor'
+            vendor.user.save(update_fields=['role'])
+        
+        self.message_user(request, f"{queryset.count()} vendor(s) approved successfully.")
     approve_vendors.short_description = "Approve selected vendors"
     
     def suspend_vendors(self, request, queryset):
-        queryset.update(status='suspended')
+        """Suspend vendors and revert their user role."""
+        for vendor in queryset:
+            vendor.status = 'suspended'
+            vendor.save()
+            
+            # Revert user role to customer when suspended
+            vendor.user.role = 'customer'
+            vendor.user.save(update_fields=['role'])
+        
+        self.message_user(request, f"{queryset.count()} vendor(s) suspended.")
     suspend_vendors.short_description = "Suspend selected vendors"
 
 

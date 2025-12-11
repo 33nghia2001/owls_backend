@@ -33,9 +33,10 @@ class VendorRegistrationSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         validated_data['user'] = user
         
-        # Update user role to vendor
-        user.role = 'vendor'
-        user.save()
+        # NOTE: Do NOT change user.role here!
+        # Role should only be changed to 'vendor' when admin approves the vendor.
+        # This prevents unauthorized access to vendor-only features before approval.
+        # The role change is handled in VendorAdmin.approve_vendors action.
         
         return super().create(validated_data)
 
