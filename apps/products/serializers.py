@@ -197,6 +197,11 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
         max_length=MAX_TAGS_PER_PRODUCT  # Limit number of tags
     )
     
+    # Inventory fields - for atomic product creation with inventory
+    initial_stock = serializers.IntegerField(write_only=True, required=False, default=0, min_value=0)
+    low_stock_threshold = serializers.IntegerField(write_only=True, required=False, default=10, min_value=0)
+    warehouse_location = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100)
+    
     class Meta:
         model = Product
         fields = [
@@ -204,7 +209,9 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
             'category', 'brand', 'price', 'compare_price', 'cost_price',
             'status', 'is_featured', 'is_digital',
             'meta_title', 'meta_description',
-            'images', 'uploaded_images', 'tags'
+            'images', 'uploaded_images', 'tags',
+            # Inventory fields
+            'initial_stock', 'low_stock_threshold', 'warehouse_location'
         ]
         read_only_fields = ['id', 'slug']
     
@@ -247,31 +254,56 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def create(self, validated_data):
+        from apps.inventory.models import Inventory
+        from django.db import transaction
+        
         uploaded_images = validated_data.pop('uploaded_images', [])
         tags = validated_data.pop('tags', [])
         
+        # Extract inventory data
+        initial_stock = validated_data.pop('initial_stock', 0)
+        low_stock_threshold = validated_data.pop('low_stock_threshold', 10)
+        warehouse_location = validated_data.pop('warehouse_location', '')
+        
         validated_data['vendor'] = self.context['request'].user.vendor_profile
-        product = super().create(validated_data)
         
-        # Create images
-        for i, image in enumerate(uploaded_images):
-            ProductImage.objects.create(
+        # Use transaction to ensure atomic creation of product + inventory
+        with transaction.atomic():
+            product = super().create(validated_data)
+            
+            # Create images
+            for i, image in enumerate(uploaded_images):
+                ProductImage.objects.create(
+                    product=product,
+                    image=image,
+                    is_primary=(i == 0),
+                    order=i
+                )
+            
+            # Create tags
+            for tag_name in tags:
+                tag, _ = ProductTag.objects.get_or_create(name=tag_name)
+                product.tag_mappings.create(tag=tag)
+            
+            # Automatically create inventory record for products without variants
+            # This ensures data integrity - no orphan products without inventory
+            Inventory.objects.create(
                 product=product,
-                image=image,
-                is_primary=(i == 0),
-                order=i
+                quantity=initial_stock,
+                low_stock_threshold=low_stock_threshold,
+                warehouse_location=warehouse_location
             )
-        
-        # Create tags
-        for tag_name in tags:
-            tag, _ = ProductTag.objects.get_or_create(name=tag_name)
-            product.tag_mappings.create(tag=tag)
         
         return product
     
     def update(self, instance, validated_data):
         uploaded_images = validated_data.pop('uploaded_images', [])
         tags = validated_data.pop('tags', None)
+        
+        # Remove inventory fields from update (use inventory API to manage stock)
+        validated_data.pop('initial_stock', None)
+        validated_data.pop('low_stock_threshold', None)
+        validated_data.pop('warehouse_location', None)
         
         instance = super().update(instance, validated_data)
         
