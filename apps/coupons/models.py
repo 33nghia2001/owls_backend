@@ -99,17 +99,40 @@ class Coupon(models.Model):
         return True
     
     def calculate_discount(self, amount):
-        """Calculate discount amount for given order amount."""
-        if self.discount_type == 'percentage':
-            discount = amount * (self.discount_value / 100)
-            if self.max_discount_amount:
-                discount = min(discount, self.max_discount_amount.amount)
-        elif self.discount_type == 'fixed':
-            discount = min(self.discount_value, amount)
-        else:  # free_shipping
-            discount = 0  # Handled separately
+        """
+        Calculate discount amount for given order amount.
         
-        return discount
+        IMPORTANT: This is the SINGLE SOURCE OF TRUTH for discount calculation.
+        Both CouponViewSet.validate and OrderViewSet.create use this method
+        to ensure consistent calculations.
+        
+        Args:
+            amount: Order subtotal (can be Decimal or MoneyField)
+        
+        Returns:
+            Decimal: The discount amount, rounded to 2 decimal places
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+        
+        # Ensure we're working with Decimal
+        if hasattr(amount, 'amount'):
+            # MoneyField
+            amount = Decimal(str(amount.amount))
+        else:
+            amount = Decimal(str(amount))
+        
+        if self.discount_type == 'percentage':
+            discount = amount * (Decimal(str(self.discount_value)) / Decimal('100'))
+            if self.max_discount_amount:
+                max_discount = Decimal(str(self.max_discount_amount.amount))
+                discount = min(discount, max_discount)
+        elif self.discount_type == 'fixed':
+            discount = min(Decimal(str(self.discount_value)), amount)
+        else:  # free_shipping
+            discount = Decimal('0')  # Handled separately in shipping calculation
+        
+        # Round to 2 decimal places for currency consistency
+        return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 class CouponUsage(models.Model):

@@ -107,6 +107,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     
     def retrieve(self, request, *args, **kwargs):
         """Get product detail and increment view count (once per session)."""
+        from .tasks import increment_view_count
+        
         instance = self.get_object()
         
         # SECURITY: Prevent DoS via view count spam
@@ -118,7 +120,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             product_id = str(instance.pk)
             
             if product_id not in viewed_products:
-                Product.objects.filter(pk=instance.pk).update(view_count=F('view_count') + 1)
+                # Use Redis for high-performance view counting (non-blocking)
+                # Actual DB sync happens via Celery task every 10 minutes
+                increment_view_count(instance.pk)
                 viewed_products.append(product_id)
                 # Keep only last 100 viewed products in session
                 request.session['viewed_products'] = viewed_products[-100:]

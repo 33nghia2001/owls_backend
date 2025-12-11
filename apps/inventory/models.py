@@ -102,14 +102,32 @@ class InventoryMovement(models.Model):
         return f"{self.inventory} - {self.movement_type}: {self.quantity}"
     
     def save(self, *args, **kwargs):
-        # Auto-update inventory quantity
+        """
+        Auto-update inventory quantity based on movement type.
+        
+        IMPORTANT: 'reserved' and 'released' movements do NOT affect total quantity.
+        They only track intent - the actual quantity update is handled separately
+        via reserved_quantity field in OrderViewSet to avoid double deduction.
+        
+        - in: Stock received → quantity increases
+        - out: Stock shipped/sold → quantity decreases  
+        - returned: Stock returned by customer → quantity increases
+        - adjustment: Manual inventory correction → quantity set to specific value
+        - reserved: Order placed, awaiting payment → NO quantity change (only reserved_quantity)
+        - released: Order cancelled/expired → NO quantity change (only reserved_quantity)
+        """
         if not self.pk:  # Only on create
-            if self.movement_type in ['in', 'returned', 'released']:
+            if self.movement_type in ['in', 'returned']:
                 self.inventory.quantity += abs(self.quantity)
-            elif self.movement_type in ['out', 'reserved']:
+                self.inventory.save()
+            elif self.movement_type == 'out':
+                # Only deduct when actually shipping out (not when reserving)
                 self.inventory.quantity -= abs(self.quantity)
+                self.inventory.save()
             elif self.movement_type == 'adjustment':
                 self.inventory.quantity = self.quantity
-            self.inventory.save()
+                self.inventory.save()
+            # 'reserved' and 'released' do NOT modify quantity
+            # They are handled via reserved_quantity in OrderViewSet
         
         super().save(*args, **kwargs)

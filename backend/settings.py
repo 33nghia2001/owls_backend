@@ -231,6 +231,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.orders.tasks.update_order_statistics',
         'schedule': 86400.0,  # Run once per day (24 hours)
     },
+    'release-held-vendor-balances': {
+        'task': 'apps.vendors.tasks.release_held_vendor_balances',
+        'schedule': 3600.0,  # Run every hour to release held balances
+    },
+    'sync-product-view-counts': {
+        'task': 'apps.products.tasks.sync_view_counts_to_db',
+        'schedule': 600.0,  # Run every 10 minutes to sync Redis view counts to DB
+    },
 }
 
 CACHES = {

@@ -166,7 +166,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             try:
                 coupon = Coupon.objects.get(code=coupon_code, is_active=True)
                 if coupon.is_valid():
-                    discount_amount = coupon.calculate_discount(subtotal)
+                    # Handle free_shipping coupon type
+                    if coupon.discount_type == 'free_shipping':
+                        shipping_cost = 0
+                    else:
+                        discount_amount = coupon.calculate_discount(subtotal)
             except Coupon.DoesNotExist:
                 pass
         

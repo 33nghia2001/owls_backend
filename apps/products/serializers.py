@@ -115,10 +115,22 @@ class ProductListSerializer(serializers.ModelSerializer):
         ]
     
     def get_primary_image(self, obj):
-        primary = obj.images.filter(is_primary=True).first()
+        """
+        Get primary image without causing N+1 query.
+        
+        Uses prefetched images from queryset (via prefetch_related('images'))
+        and filters in Python instead of making additional DB queries.
+        """
+        # Access prefetched images via .all() to use cache
+        images = obj.images.all()
+        
+        # Filter in Python (no additional query if images were prefetched)
+        primary = next((img for img in images if img.is_primary), None)
         if primary:
             return ProductImageSerializer(primary).data
-        first_image = obj.images.first()
+        
+        # Fallback to first image
+        first_image = images[0] if images else None
         return ProductImageSerializer(first_image).data if first_image else None
 
 
