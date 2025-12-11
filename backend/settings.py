@@ -12,6 +12,9 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
 
+# Frontend URL (for redirects after payment, etc.)
+FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
+
 # Application Definition
 DJANGO_APPS = [
     'django.contrib.admin',

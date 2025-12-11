@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
 from django.conf import settings
 from django.db import transaction
+from decimal import Decimal
 import stripe
 
 from .models import Payment, PaymentLog
@@ -111,9 +112,9 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                     mode='payment',
                     success_url=serializer.validated_data.get(
                         'return_url',
-                        'http://localhost:3000/checkout/success'
+                        f'{settings.FRONTEND_URL}/checkout/success'
                     ) + f'?order_id={order.id}',
-                    cancel_url='http://localhost:3000/checkout/cancel',
+                    cancel_url=f'{settings.FRONTEND_URL}/checkout/cancel',
                     metadata={
                         'order_id': str(order.id),
                         'payment_id': str(payment.id),
@@ -233,8 +234,8 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             })
         
         # Validate amount matches order total (VNPay sends amount * 100)
-        vnp_amount = int(params.get('vnp_Amount', 0)) / 100
-        if vnp_amount != float(order.total.amount):
+        vnp_amount = Decimal(params.get('vnp_Amount', 0)) / 100
+        if vnp_amount != order.total.amount:
             return Response(
                 {'error': 'Amount mismatch'},
                 status=status.HTTP_400_BAD_REQUEST
