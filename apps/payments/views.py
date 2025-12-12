@@ -15,7 +15,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from apps.orders.models import Order
 from .models import Payment, PaymentLog
 from .serializers import PaymentSerializer, CreatePaymentSerializer
-from .vnpay import VNPayService  # Import class đã sửa ở bước trước
+from .vnpay import VNPayService
+from .tasks import process_vnpay_refund_task
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,12 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         """
         Handle VNPay IPN (Server-to-Server).
         Critical for ensuring payment confirmation even if user closes browser.
+        Includes replay attack prevention and idempotency checks.
         """
+        from datetime import timedelta
+        import hashlib
+        from .models import WebhookEvent
+        
         if request.method == 'POST':
             params = dict(request.POST)
         else:
@@ -245,13 +251,34 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         
         vnpay_service = VNPayService()
         
-        # 1. Verify Signature
+        # 1. Verify Signature FIRST
         if not vnpay_service.verify_callback(params.copy()):
             return Response({'RspCode': '97', 'Message': 'Invalid Signature'})
         
+        # 2. REPLAY ATTACK PREVENTION - Check timestamp
+        vnp_pay_date = params.get('vnp_PayDate')
+        if vnp_pay_date:
+            try:
+                from datetime import datetime
+                pay_time = datetime.strptime(vnp_pay_date, '%Y%m%d%H%M%S')
+                pay_time = timezone.make_aware(pay_time)
+                if timezone.now() - pay_time > timedelta(minutes=30):
+                    logger.warning(f"VNPay IPN expired callback: {vnp_pay_date}")
+                    return Response({'RspCode': '98', 'Message': 'Callback expired'})
+            except ValueError:
+                pass  # Allow if date parsing fails
+        
+        # 3. IDEMPOTENCY - Check if this transaction was already processed
+        vnp_transaction_no = params.get('vnp_TransactionNo', '')
+        event_id = f"vnpay_{vnp_transaction_no}"
+        
+        if WebhookEvent.objects.filter(event_id=event_id, source='vnpay').exists():
+            logger.info(f"VNPay IPN duplicate: {vnp_transaction_no}")
+            return Response({'RspCode': '02', 'Message': 'Already processed'})
+        
         order_id = params.get('vnp_TxnRef')
         
-        # 2. Check Order/Payment Existence
+        # 4. Check Order/Payment Existence
         try:
             order = Order.objects.select_for_update().get(id=order_id)
             payment = order.payment
@@ -311,6 +338,13 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             order.confirmed_at = timezone.now()
             order.save()
             
+            # Record webhook event for idempotency
+            WebhookEvent.objects.create(
+                event_id=event_id,
+                event_type='payment_success',
+                source='vnpay'
+            )
+            
             PaymentLog.objects.create(
                 payment=payment,
                 action='vnpay_ipn',
@@ -321,7 +355,13 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'RspCode': '00', 'Message': 'Confirm Success'})
             
         else:
-            # Payment Failed
+            # Payment Failed - still record event to prevent replay
+            WebhookEvent.objects.create(
+                event_id=event_id,
+                event_type='payment_failed',
+                source='vnpay'
+            )
+            
             payment.status = 'failed'
             payment.gateway_response = params
             payment.save()
@@ -402,12 +442,24 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         refund_amount = request.data.get('amount')
         reason = request.data.get('reason', 'requested_by_customer')
         
+        # DOUBLE REFUND PROTECTION
+        requested_amount = Decimal(str(refund_amount)) if refund_amount else payment.amount.amount
+        already_refunded = payment.refund_amount.amount if payment.refund_amount else Decimal('0')
+        max_refundable = payment.amount.amount - already_refunded
+        
+        if requested_amount > max_refundable:
+            return Response({
+                'error': f'Cannot refund {requested_amount}. Already refunded: {already_refunded}. Max remaining: {max_refundable}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         if payment.method == 'stripe':
             return self._process_stripe_refund(payment, refund_amount, reason)
         elif payment.method == 'vnpay':
             return self._process_vnpay_refund(payment, refund_amount, reason)
         elif payment.method == 'cod':
             payment.status = 'refunded'
+            payment.refund_amount = requested_amount
+            payment.refunded_at = timezone.now()
             payment.save()
             return Response({'success': True, 'message': 'COD marked as refunded.'})
             
@@ -446,9 +498,9 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
     def _process_vnpay_refund(self, payment, refund_amount=None, reason='requested_by_customer'):
         """
-        Helper to process VNPay refund using VNPayService.
+        Process VNPay refund using Celery task for reliability.
+        Falls back to sync processing if Celery is unavailable.
         """
-        vnpay_service = VNPayService()
         client_ip = self._get_client_ip(self.request)
         user_name = self.request.user.email
         
@@ -456,7 +508,46 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         amount = Decimal(str(refund_amount)) if refund_amount else payment.amount.amount
         
         try:
-            # Gọi API hoàn tiền
+            # Try async processing with Celery (preferred)
+            task = process_vnpay_refund_task.delay(
+                payment_id=str(payment.id),
+                amount=str(amount),
+                reason=reason,
+                client_ip=client_ip,
+                user_name=user_name
+            )
+            
+            # Mark payment as processing
+            payment.status = 'refund_pending'
+            payment.save(update_fields=['status'])
+            
+            PaymentLog.objects.create(
+                payment=payment,
+                action='vnpay_refund_queued',
+                request_data={'amount': str(amount), 'reason': reason, 'task_id': task.id},
+                response_data={},
+                is_success=True
+            )
+            
+            return Response({
+                'success': True,
+                'message': 'Refund request queued for processing',
+                'task_id': task.id,
+                'status': 'pending'
+            }, status=status.HTTP_202_ACCEPTED)
+            
+        except Exception as celery_error:
+            # Celery unavailable - fallback to sync processing
+            logger.warning(f"Celery unavailable, processing refund synchronously: {celery_error}")
+            return self._process_vnpay_refund_sync(payment, amount, reason, client_ip, user_name)
+
+    def _process_vnpay_refund_sync(self, payment, amount, reason, client_ip, user_name):
+        """
+        Synchronous VNPay refund processing (fallback when Celery unavailable).
+        """
+        vnpay_service = VNPayService()
+        
+        try:
             response = vnpay_service.refund(payment, amount, reason, client_ip, user_name)
             
             if response.get('vnp_ResponseCode') == '00':
@@ -464,7 +555,6 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 payment.refund_amount = amount
                 payment.refunded_at = timezone.now()
                 
-                # Update response log
                 gw_response = payment.gateway_response or {}
                 gw_response.update({'refund_response': response})
                 payment.gateway_response = gw_response
@@ -472,7 +562,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 
                 PaymentLog.objects.create(
                     payment=payment,
-                    action='vnpay_refund',
+                    action='vnpay_refund_sync',
                     request_data={'amount': str(amount), 'reason': reason},
                     response_data=response,
                     is_success=True
@@ -484,10 +574,9 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                     'data': response
                 })
             else:
-                # Log failure
                 PaymentLog.objects.create(
                     payment=payment,
-                    action='vnpay_refund',
+                    action='vnpay_refund_sync',
                     request_data={'amount': str(amount)},
                     response_data=response,
                     is_success=False,

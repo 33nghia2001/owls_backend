@@ -200,10 +200,12 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',      # Unauthenticated users: 100 requests/hour
-        'user': '1000/hour',     # Authenticated users: 1000 requests/hour
-        'login': '5/minute',     # Login attempts: 5 per minute
-        'sensitive': '30/hour',  # Sensitive operations (coupon, checkout): 30/hour
+        'anon': '100/hour',         # Unauthenticated users: 100 requests/hour
+        'user': '1000/hour',        # Authenticated users: 1000 requests/hour
+        'login': '5/minute',        # Login attempts: 5 per minute
+        'registration': '5/hour',   # Registration: 5 per hour per IP
+        'sensitive': '30/hour',     # Sensitive operations (coupon, checkout): 30/hour
+        'password_reset': '3/hour', # Password reset requests: 3 per hour
     },
 }
 
@@ -265,6 +267,9 @@ EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='noreply@owlmarket.com')
 
+# Backend URL (for payment callbacks, webhooks, etc.)
+BACKEND_URL = env('BACKEND_URL', default='http://localhost:8000')
+
 # Payment Settings (Safe Load)
 STRIPE_PUBLIC_KEY = env('STRIPE_PUBLIC_KEY', default='')
 STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')
@@ -273,8 +278,10 @@ STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
 VNPAY_TMN_CODE = env('VNPAY_TMN_CODE', default='')
 VNPAY_HASH_SECRET = env('VNPAY_HASH_SECRET', default='')
 VNPAY_URL = env('VNPAY_URL', default='https://sandbox.vnpayment.vn/paymentv2/vpcpay.html')
-VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default='http://localhost:8000/api/payments/payments/vnpay_return/')
-VNPAY_IPN_URL = env('VNPAY_IPN_URL', default='http://localhost:8000/api/payments/payments/vnpay_ipn/')
+# VNPay callback URLs - constructed from BACKEND_URL if not explicitly set
+VNPAY_RETURN_URL = env('VNPAY_RETURN_URL', default=f'{BACKEND_URL}/api/v1/payments/payments/vnpay_return/')
+VNPAY_IPN_URL = env('VNPAY_IPN_URL', default=f'{BACKEND_URL}/api/v1/payments/payments/vnpay_ipn/')
+VNPAY_REFUND_URL = env('VNPAY_REFUND_URL', default='https://sandbox.vnpayment.vn/merchant_webapi/api/transaction')
 
 # Shipping Settings
 DEFAULT_SHIPPING_COST = env.int('DEFAULT_SHIPPING_COST', default=30000)  # VND

@@ -103,6 +103,12 @@ class CreateVendorReviewSerializer(serializers.ModelSerializer):
         model = VendorReview
         fields = ['vendor', 'order', 'rating', 'comment']
     
+    def validate_comment(self, value):
+        """Sanitize comment to prevent XSS attacks."""
+        if value:
+            return bleach.clean(value, tags=[], strip=True)
+        return value
+    
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)

@@ -91,3 +91,26 @@ class PaymentLog(models.Model):
     
     def __str__(self):
         return f"{self.payment} - {self.action}"
+
+
+class WebhookEvent(models.Model):
+    """Track processed webhook events to prevent replay attacks and duplicate processing."""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.CharField(max_length=255, unique=True, db_index=True)
+    event_type = models.CharField(max_length=100)
+    source = models.CharField(max_length=50)  # 'stripe', 'vnpay'
+    processed_at = models.DateTimeField(auto_now_add=True)
+    payload_hash = models.CharField(max_length=64, blank=True)  # SHA256 of payload
+    
+    class Meta:
+        db_table = 'webhook_events'
+        verbose_name = 'Webhook Event'
+        verbose_name_plural = 'Webhook Events'
+        indexes = [
+            models.Index(fields=['source', 'event_id']),
+            models.Index(fields=['processed_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.source}:{self.event_id}"

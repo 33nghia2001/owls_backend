@@ -21,6 +21,13 @@ class ReviewViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Review.objects.filter(is_approved=True).select_related('user')
         
+        # SECURITY: For mutation operations, only allow users to modify their own reviews
+        if self.action in ['update', 'partial_update', 'destroy']:
+            if self.request.user.is_authenticated:
+                queryset = queryset.filter(user=self.request.user)
+            else:
+                queryset = queryset.none()
+        
         # Filter by product if specified
         product_id = self.request.query_params.get('product')
         if product_id:
@@ -102,7 +109,16 @@ class VendorReviewViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'rating']
     
     def get_queryset(self):
-        return VendorReview.objects.filter(is_approved=True).select_related('user')
+        queryset = VendorReview.objects.filter(is_approved=True).select_related('user')
+        
+        # SECURITY: For mutation operations, only allow users to modify their own reviews
+        if self.action in ['update', 'partial_update', 'destroy']:
+            if self.request.user.is_authenticated:
+                queryset = queryset.filter(user=self.request.user)
+            else:
+                queryset = queryset.none()
+        
+        return queryset
     
     def get_serializer_class(self):
         if self.action == 'create':

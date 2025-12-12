@@ -130,10 +130,6 @@ class OrderViewSet(viewsets.ModelViewSet):
                     {'error': f'Bạn đã có {pending_order_count} đơn hàng chưa thanh toán. Vui lòng thanh toán hoặc hủy trước khi đặt đơn mới.'},
                     status=status.HTTP_429_TOO_MANY_REQUESTS
                 )
-            return Response(
-                {'error': f'Bạn đã có {pending_order_count} đơn hàng chưa thanh toán. Vui lòng thanh toán hoặc hủy trước khi đặt đơn mới.'},
-                status=status.HTTP_429_TOO_MANY_REQUESTS
-            )
         
         # 1. CHECK INVENTORY AND VALIDATE PRICES BEFORE CREATING ORDER
         inventory_updates = []  # Store inventory objects to update later

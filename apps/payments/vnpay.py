@@ -16,8 +16,7 @@ class VNPayService:
         self.hash_secret = settings.VNPAY_HASH_SECRET
         self.url = settings.VNPAY_URL
         self.return_url = settings.VNPAY_RETURN_URL
-        # URL API hoàn tiền. Nên đưa vào settings.py để dễ chuyển đổi giữa sandbox/prod
-        self.refund_url = getattr(settings, 'VNPAY_REFUND_URL', "https://sandbox.vnpayment.vn/merchant_webapi/api/transaction")
+        self.refund_url = settings.VNPAY_REFUND_URL
 
     def create_payment_url(self, order, return_url=None, client_ip=None):
         """Create VNPay payment URL."""
@@ -79,8 +78,8 @@ class VNPayService:
             hashlib.sha512
         ).hexdigest()
         
-        # So sánh hash (không phân biệt hoa thường)
-        return calculated_hash.lower() == vnp_secure_hash.lower()
+        # So sánh hash với timing-safe comparison để chống timing attack
+        return hmac.compare_digest(calculated_hash.lower(), vnp_secure_hash.lower())
 
     def is_success(self, response_code):
         """Check if payment was successful (Code 00)."""

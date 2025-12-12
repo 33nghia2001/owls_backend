@@ -59,11 +59,16 @@ class LoginRateThrottle(ScopedRateThrottle):
     scope = 'login'
 
 
+class RegistrationRateThrottle(ScopedRateThrottle):
+    """Custom throttle for registration to prevent spam accounts."""
+    scope = 'registration'
+
+
 class AuthViewSet(viewsets.ViewSet):
     """ViewSet for authentication endpoints."""
     permission_classes = [AllowAny]
     
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], throttle_classes=[RegistrationRateThrottle])
     def register(self, request):
         """Register a new user."""
         serializer = UserRegistrationSerializer(data=request.data)
