@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 # Cookie settings for JWT tokens
 JWT_COOKIE_SECURE = not settings.DEBUG  # True in production (HTTPS only)
 JWT_COOKIE_HTTPONLY = True
-# SECURITY: Use 'Lax' for better compatibility
-# Lax prevents CSRF in most cases while allowing cookies in safe cross-site scenarios
-# (like redirects after external auth). Strict blocks too many legitimate cases.
-JWT_COOKIE_SAMESITE = 'Lax'
+# SECURITY: For cross-domain (frontend on Netlify, backend on Koyeb),
+# we need SameSite='None' with Secure=True to allow cookies in cross-origin requests.
+# In development (same origin), 'Lax' works fine.
+JWT_COOKIE_SAMESITE = 'None' if not settings.DEBUG else 'Lax'
 JWT_ACCESS_COOKIE_NAME = 'access_token'
 JWT_REFRESH_COOKIE_NAME = 'refresh_token'
 JWT_ACCESS_MAX_AGE = 60 * 15  # 15 minutes
