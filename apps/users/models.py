@@ -72,7 +72,18 @@ class Users(AbstractBaseUser, PermissionsMixin):
 
 
 class Address(models.Model):
-    """User shipping/billing addresses with Vietnam-specific fields."""
+    """
+    User shipping/billing addresses with Vietnam-specific fields.
+    
+    Updated for new administrative structure effective 01/07/2025:
+    - Vietnam now has 34 provinces/cities (down from 63)
+    - Many provinces were merged (e.g., Bình Dương + TPHCM + Bà Rịa Vũng Tàu -> Hồ Chí Minh)
+    - Ward (Phường/Xã) is now directly under Province (no separate district level in new structure)
+    
+    For shipping calculation with GHN/GHTK APIs:
+    - province_id and ward_code are used for fee calculation
+    - district fields kept for backward compatibility with existing orders
+    """
     
     class AddressType(models.TextChoices):
         SHIPPING = 'shipping', 'Shipping'
@@ -87,17 +98,20 @@ class Address(models.Model):
     street_address = models.CharField(max_length=255)  # Số nhà, tên đường
     apartment = models.CharField(max_length=100, blank=True)  # Tòa nhà, căn hộ
     
-    # Vietnam administrative divisions - aligned with GHN API
+    # Vietnam administrative divisions (34 provinces after 01/07/2025)
     province = models.CharField(max_length=100, verbose_name='Tỉnh/Thành phố')
     province_id = models.IntegerField(null=True, blank=True, verbose_name='GHN Province ID')
-    district = models.CharField(max_length=100, verbose_name='Quận/Huyện')
-    district_id = models.IntegerField(null=True, blank=True, verbose_name='GHN District ID')
+    
+    # Ward/Commune directly under province in new structure
     ward = models.CharField(max_length=100, verbose_name='Phường/Xã')
     ward_code = models.CharField(max_length=20, blank=True, verbose_name='GHN Ward Code')
     
-    # Legacy fields - kept for backward compatibility, will be removed in future
-    city = models.CharField(max_length=100, blank=True, editable=False)  # Deprecated, use province
-    state = models.CharField(max_length=100, blank=True, editable=False)  # Deprecated, use district
+    # Legacy fields - kept for backward compatibility with old orders and GHN API
+    # GHN may still use district-level IDs during transition period
+    district = models.CharField(max_length=100, blank=True, verbose_name='Quận/Huyện (legacy)')
+    district_id = models.IntegerField(null=True, blank=True, verbose_name='GHN District ID (legacy)')
+    city = models.CharField(max_length=100, blank=True, editable=False)  # Deprecated
+    state = models.CharField(max_length=100, blank=True, editable=False)  # Deprecated
     
     country = models.CharField(max_length=100, default='Vietnam')
     postal_code = models.CharField(max_length=20, blank=True)  # Optional in Vietnam
@@ -113,7 +127,11 @@ class Address(models.Model):
         ordering = ['-is_default', '-created_at']
     
     def __str__(self):
-        return f"{self.full_name} - {self.street_address}, {self.ward}, {self.district}, {self.province}"
+        parts = [self.street_address, self.ward]
+        if self.district:
+            parts.append(self.district)
+        parts.append(self.province)
+        return f"{self.full_name} - {', '.join(parts)}"
     
     @property
     def full_address(self):
@@ -121,7 +139,10 @@ class Address(models.Model):
         parts = [self.street_address]
         if self.apartment:
             parts.append(self.apartment)
-        parts.extend([self.ward, self.district, self.province])
+        parts.append(self.ward)
+        if self.district:
+            parts.append(self.district)
+        parts.append(self.province)
         return ', '.join(filter(None, parts))
     
     def save(self, *args, **kwargs):

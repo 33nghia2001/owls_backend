@@ -76,7 +76,14 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class AddressSerializer(serializers.ModelSerializer):
-    """Serializer for user addresses with Vietnam-specific fields."""
+    """
+    Serializer for user addresses with Vietnam-specific fields.
+    
+    Updated for new administrative structure (01/07/2025):
+    - Vietnam now has 34 provinces/cities
+    - Ward (Phường/Xã) is directly under Province
+    - District is optional (legacy field for backward compatibility)
+    """
     
     # Computed fields
     full_address = serializers.ReadOnlyField()
@@ -86,24 +93,35 @@ class AddressSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'address_type', 'full_name', 'phone', 'street_address',
             'apartment', 
-            # New Vietnam-specific fields
-            'province', 'province_id', 'district', 'district_id', 
+            # Vietnam-specific fields (new structure)
+            'province', 'province_id', 
             'ward', 'ward_code',
-            # Legacy fields (read-only, for backward compatibility)
+            # Legacy fields (optional, for backward compatibility)
+            'district', 'district_id',
             'city', 'state',
             'country', 'postal_code',
             'is_default', 'full_address', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'city', 'state', 'full_address', 'created_at', 'updated_at']
     
+    def validate_province(self, value):
+        """Validate and normalize province name against 34 provinces list."""
+        from apps.shipping.constants import normalize_province_name
+        
+        normalized = normalize_province_name(value)
+        if not normalized:
+            raise serializers.ValidationError(
+                f'Tỉnh/Thành phố "{value}" không hợp lệ. Việt Nam hiện có 34 tỉnh thành (sau sáp nhập 01/07/2025).'
+            )
+        return normalized
+    
     def validate(self, attrs):
-        # Ensure Vietnam-specific fields are provided
+        # Ensure required fields are provided
         if not attrs.get('province'):
             raise serializers.ValidationError({'province': 'Tỉnh/Thành phố là bắt buộc.'})
-        if not attrs.get('district'):
-            raise serializers.ValidationError({'district': 'Quận/Huyện là bắt buộc.'})
         if not attrs.get('ward'):
             raise serializers.ValidationError({'ward': 'Phường/Xã là bắt buộc.'})
+        # District is now optional in new structure
         return attrs
     
     def create(self, validated_data):
