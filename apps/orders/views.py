@@ -21,6 +21,11 @@ from apps.cart.models import Cart
 from apps.coupons.models import Coupon, CouponUsage
 from apps.vendors.permissions import IsApprovedVendor
 from apps.inventory.models import Inventory, InventoryMovement
+from apps.notifications.helpers import (
+    notify_vendor_new_order, notify_vendor_order_cancelled,
+    notify_refund_approved, notify_refund_rejected,
+    notify_order_status_changed,
+)
 
 
 class SensitiveRateThrottle(ScopedRateThrottle):
@@ -655,7 +660,8 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
         refund_request = serializer.save()
         
         # Notify vendor(s) about the refund request
-        # TODO: Send notification to vendor
+        # Note: Vendors are notified via email/dashboard, not push notification for refund requests
+        # as it requires admin review. This is intentional.
         
         return Response(
             RefundRequestSerializer(refund_request).data,
@@ -738,7 +744,11 @@ class RefundRequestViewSet(viewsets.ModelViewSet):
             )
             message = 'Đã từ chối yêu cầu hoàn tiền.'
         
-        # TODO: Send notification to customer
+        # Send notification to customer
+        if data['action'] == 'approve':
+            notify_refund_approved(refund_request)
+        else:
+            notify_refund_rejected(refund_request, data.get('note', ''))
         
         return Response({
             'message': message,

@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 import environ
+from celery.schedules import crontab
 
 # Init Environment
 env = environ.Env(DEBUG=(bool, False))
@@ -250,6 +251,19 @@ CELERY_BEAT_SCHEDULE = {
     'sync-product-view-counts': {
         'task': 'apps.products.tasks.sync_view_counts_to_db',
         'schedule': 600.0,  # Run every 10 minutes to sync Redis view counts to DB
+    },
+    # Analytics tasks - run daily at 2 AM
+    'populate-vendor-stats': {
+        'task': 'analytics.populate_vendor_stats',
+        'schedule': crontab(hour=2, minute=0),  # Run at 2:00 AM daily
+    },
+    'populate-platform-stats': {
+        'task': 'analytics.populate_platform_stats',
+        'schedule': crontab(hour=2, minute=15),  # Run at 2:15 AM daily
+    },
+    'cleanup-old-product-views': {
+        'task': 'analytics.cleanup_old_product_views',
+        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Run at 3 AM every Sunday
     },
 }
 

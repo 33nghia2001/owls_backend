@@ -308,6 +308,58 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     @action(detail=False, methods=['post'])
+    def upload_avatar(self, request):
+        """Upload user avatar image."""
+        if 'avatar' not in request.FILES:
+            return Response(
+                {'error': 'Vui lòng chọn file ảnh để upload.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        avatar_file = request.FILES['avatar']
+        
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+        if avatar_file.content_type not in allowed_types:
+            return Response(
+                {'error': 'Chỉ chấp nhận file ảnh (JPEG, PNG, GIF, WebP).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate file size (max 5MB)
+        max_size = 5 * 1024 * 1024  # 5MB
+        if avatar_file.size > max_size:
+            return Response(
+                {'error': 'Kích thước file không được vượt quá 5MB.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Delete old avatar if exists
+        user = request.user
+        if user.avatar:
+            user.avatar.delete(save=False)
+        
+        # Save new avatar
+        user.avatar = avatar_file
+        user.save()
+        
+        return Response({
+            'message': 'Upload ảnh đại diện thành công.',
+            'avatar': user.avatar.url if user.avatar else None
+        })
+    
+    @action(detail=False, methods=['delete'])
+    def delete_avatar(self, request):
+        """Delete user avatar."""
+        user = request.user
+        if user.avatar:
+            user.avatar.delete(save=False)
+            user.avatar = None
+            user.save()
+            return Response({'message': 'Đã xóa ảnh đại diện.'})
+        return Response({'message': 'Không có ảnh đại diện để xóa.'})
+    
+    @action(detail=False, methods=['post'])
     def change_password(self, request):
         """Change user password."""
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
@@ -316,6 +368,90 @@ class UserViewSet(viewsets.ModelViewSet):
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
         return Response({'message': 'Password changed successfully.'})
+    
+    @action(detail=False, methods=['post'])
+    def delete_account(self, request):
+        """
+        Delete user account with all associated data.
+        Requires password confirmation.
+        """
+        password = request.data.get('password')
+        
+        if not password:
+            return Response(
+                {'error': 'Vui lòng nhập mật khẩu để xác nhận xóa tài khoản.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user = request.user
+        
+        # Verify password
+        if not user.check_password(password):
+            return Response(
+                {'error': 'Mật khẩu không đúng.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check for active orders
+        from apps.orders.models import Order
+        active_orders = Order.objects.filter(
+            user=user,
+            status__in=['pending', 'confirmed', 'processing', 'shipped']
+        ).exists()
+        
+        if active_orders:
+            return Response(
+                {'error': 'Bạn không thể xóa tài khoản khi còn đơn hàng đang xử lý. Vui lòng đợi đơn hàng hoàn tất hoặc hủy đơn trước.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if user is a vendor
+        from apps.vendors.models import Vendor
+        try:
+            vendor = Vendor.objects.get(user=user)
+            if vendor.status == 'approved':
+                # Check for pending vendor orders
+                vendor_orders = Order.objects.filter(
+                    items__product__vendor=vendor,
+                    status__in=['pending', 'confirmed', 'processing', 'shipped']
+                ).exists()
+                
+                if vendor_orders:
+                    return Response(
+                        {'error': 'Bạn không thể xóa tài khoản khi cửa hàng còn đơn hàng đang xử lý.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        except Vendor.DoesNotExist:
+            pass
+        
+        # Store email for logging
+        user_email = user.email
+        
+        # Delete avatar if exists
+        if user.avatar:
+            user.avatar.delete(save=False)
+        
+        # Anonymize instead of hard delete (for data integrity)
+        # Option 1: Hard delete - will cascade
+        # user.delete()
+        
+        # Option 2: Soft delete / Anonymize (recommended for e-commerce)
+        user.is_active = False
+        user.email = f"deleted_{user.id}@deleted.owls"
+        user.first_name = "Deleted"
+        user.last_name = "User"
+        user.phone_number = ""
+        user.avatar = None
+        user.save()
+        
+        # Delete all addresses
+        Address.objects.filter(user=user).delete()
+        
+        logger.info(f"Account deleted/deactivated for user: {user_email}")
+        
+        return Response({
+            'message': 'Tài khoản của bạn đã được xóa thành công.'
+        })
 
 
 class AddressViewSet(viewsets.ModelViewSet):

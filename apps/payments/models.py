@@ -11,7 +11,8 @@ class Payment(models.Model):
         COD = 'cod', 'Cash on Delivery'
         STRIPE = 'stripe', 'Stripe'
         VNPAY = 'vnpay', 'VNPay'
-        MOMO = 'momo', 'MoMo'
+        # MoMo removed - not implemented yet
+        # MOMO = 'momo', 'MoMo'
     
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'

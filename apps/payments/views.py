@@ -17,6 +17,10 @@ from .models import Payment, PaymentLog
 from .serializers import PaymentSerializer, CreatePaymentSerializer
 from .vnpay import VNPayService
 from .tasks import process_vnpay_refund_task
+from apps.notifications.helpers import (
+    notify_payment_successful, notify_payment_failed,
+    notify_order_confirmed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +219,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 order.status = 'confirmed'
                 order.confirmed_at = timezone.now()
                 order.save()
+                
+                # Send notifications
+                notify_payment_successful(payment)
+                notify_order_confirmed(order)
             
             return Response({
                 'success': True,
@@ -225,6 +233,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             payment.status = 'failed'
             payment.gateway_response = params
             payment.save()
+            
+            # Notify payment failed
+            notify_payment_failed(payment, f'Mã lỗi: {response_code}')
+            
             return Response({
                 'success': False,
                 'message': 'Payment failed',
@@ -338,6 +350,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             order.status = 'confirmed'
             order.confirmed_at = timezone.now()
             order.save()
+            
+            # Send notifications to customer
+            notify_payment_successful(payment)
+            notify_order_confirmed(order)
             
             # Record webhook event for idempotency
             WebhookEvent.objects.create(
