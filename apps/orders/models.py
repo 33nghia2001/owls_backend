@@ -419,3 +419,142 @@ class SubOrderStatusHistory(models.Model):
     
     def __str__(self):
         return f"{self.sub_order.sub_order_number} - {self.status}"
+
+
+class RefundRequest(models.Model):
+    """
+    Refund request from customer.
+    
+    Customers can request refunds for orders that are:
+    - Delivered but have issues (damaged, wrong item, etc.)
+    - Not delivered after reasonable time
+    - Cancelled after payment
+    
+    Workflow:
+    1. Customer creates RefundRequest with reason and evidence
+    2. Vendor/Admin reviews request
+    3. If approved, Payment refund is initiated
+    4. Order/Item status updated to 'refunded'
+    """
+    
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending Review'
+        UNDER_REVIEW = 'under_review', 'Under Review'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+        PROCESSING = 'processing', 'Processing Refund'
+        COMPLETED = 'completed', 'Refund Completed'
+        CANCELLED = 'cancelled', 'Cancelled by User'
+    
+    class Reason(models.TextChoices):
+        DAMAGED = 'damaged', 'Product Damaged'
+        WRONG_ITEM = 'wrong_item', 'Wrong Item Received'
+        NOT_AS_DESCRIBED = 'not_as_described', 'Not As Described'
+        NOT_DELIVERED = 'not_delivered', 'Order Not Delivered'
+        DUPLICATE_ORDER = 'duplicate_order', 'Duplicate Order'
+        CHANGED_MIND = 'changed_mind', 'Changed Mind'
+        OTHER = 'other', 'Other'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='refund_requests')
+    sub_order = models.ForeignKey(
+        SubOrder, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='refund_requests'
+    )
+    item = models.ForeignKey(
+        OrderItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='refund_requests'
+    )  # Optional - if refund is for specific item
+    
+    # Request details
+    reason = models.CharField(max_length=30, choices=Reason.choices)
+    description = models.TextField(help_text='Detailed description of the issue')
+    
+    # Amount
+    requested_amount = MoneyField(max_digits=12, decimal_places=2, default_currency='VND')
+    approved_amount = MoneyField(
+        max_digits=12, decimal_places=2, default_currency='VND',
+        null=True, blank=True
+    )
+    
+    # Status
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    
+    # Evidence
+    evidence_images = models.JSONField(default=list, blank=True)  # List of image URLs
+    
+    # Review info
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_refunds'
+    )
+    review_note = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Refund info (after approval)
+    refund_transaction_id = models.CharField(max_length=100, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'refund_requests'
+        verbose_name = 'Refund Request'
+        verbose_name_plural = 'Refund Requests'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['order', 'status']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Refund #{self.id} - {self.order.order_number}"
+    
+    def approve(self, reviewed_by, amount=None, note=''):
+        """Approve refund request."""
+        self.status = self.Status.APPROVED
+        self.reviewed_by = reviewed_by
+        self.approved_amount = amount or self.requested_amount
+        self.review_note = note
+        self.reviewed_at = timezone.now()
+        self.save()
+        
+        # Create notification for user
+        return True
+    
+    def reject(self, reviewed_by, note=''):
+        """Reject refund request."""
+        self.status = self.Status.REJECTED
+        self.reviewed_by = reviewed_by
+        self.review_note = note
+        self.reviewed_at = timezone.now()
+        self.save()
+        return True
+    
+    def complete_refund(self, transaction_id=''):
+        """Mark refund as completed after payment processed."""
+        self.status = self.Status.COMPLETED
+        self.refund_transaction_id = transaction_id
+        self.refunded_at = timezone.now()
+        self.save()
+        
+        # Update order/item status
+        if self.item:
+            self.item.status = OrderItem.Status.REFUNDED
+            self.item.save(update_fields=['status', 'updated_at'])
+        else:
+            self.order.status = Order.Status.REFUNDED
+            self.order.save(update_fields=['status', 'updated_at'])
+        
+        return True

@@ -1,5 +1,7 @@
 from django.db import models, IntegrityError
 from django.utils.text import slugify
+from django.contrib.postgres.search import SearchVectorField
+from django.contrib.postgres.indexes import GinIndex
 from mptt.models import MPTTModel, TreeForeignKey
 from djmoney.models.fields import MoneyField
 import uuid
@@ -204,6 +206,10 @@ class Product(models.Model):
     sold_count = models.PositiveIntegerField(default=0)
     view_count = models.PositiveIntegerField(default=0)
     
+    # PostgreSQL Full-Text Search vector
+    # This field stores pre-computed search vectors for fast full-text search
+    search_vector = SearchVectorField(null=True, blank=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -219,6 +225,8 @@ class Product(models.Model):
             models.Index(fields=['category', 'status']),
             models.Index(fields=['-sold_count']),
             models.Index(fields=['-rating']),
+            # GIN index for full-text search - MUCH faster than sequential scan
+            GinIndex(fields=['search_vector'], name='product_search_gin_idx'),
         ]
     
     def __str__(self):

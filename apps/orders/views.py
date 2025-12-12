@@ -11,10 +11,11 @@ from django.db.models import F
 from django.conf import settings
 from django.core.cache import cache
 
-from .models import Order, OrderItem, OrderStatusHistory
+from .models import Order, OrderItem, OrderStatusHistory, RefundRequest
 from .serializers import (
     OrderListSerializer, OrderDetailSerializer, CreateOrderSerializer,
-    UpdateOrderStatusSerializer, VendorOrderItemSerializer
+    UpdateOrderStatusSerializer, VendorOrderItemSerializer,
+    RefundRequestSerializer, CreateRefundRequestSerializer, ReviewRefundRequestSerializer
 )
 from apps.cart.models import Cart
 from apps.coupons.models import Coupon, CouponUsage
@@ -602,4 +603,144 @@ class VendorOrderViewSet(viewsets.ReadOnlyModelViewSet):
             'shipped': items.filter(status='shipped').count(),
             'delivered': items.filter(status='delivered').count(),
             'cancelled': items.filter(status='cancelled').count(),
+        })
+
+
+class RefundRequestViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for customer refund requests.
+    
+    Endpoints:
+    - POST /orders/refunds/ - Create refund request
+    - GET /orders/refunds/ - List user's refund requests
+    - GET /orders/refunds/{id}/ - Get refund request detail
+    - DELETE /orders/refunds/{id}/ - Cancel pending refund request
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CreateRefundRequestSerializer
+        if self.action == 'review':
+            return ReviewRefundRequestSerializer
+        return RefundRequestSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        # Vendors see refund requests for their orders
+        if hasattr(user, 'vendor_profile'):
+            vendor = user.vendor_profile
+            return RefundRequest.objects.filter(
+                order__items__vendor=vendor
+            ).select_related(
+                'order', 'item', 'reviewed_by'
+            ).distinct()
+        
+        # Regular users see their own requests
+        return RefundRequest.objects.filter(
+            order__user=user
+        ).select_related(
+            'order', 'item', 'reviewed_by'
+        )
+    
+    @transaction.atomic
+    def create(self, request):
+        """Create a new refund request."""
+        serializer = CreateRefundRequestSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        refund_request = serializer.save()
+        
+        # Notify vendor(s) about the refund request
+        # TODO: Send notification to vendor
+        
+        return Response(
+            RefundRequestSerializer(refund_request).data,
+            status=status.HTTP_201_CREATED
+        )
+    
+    def destroy(self, request, *args, **kwargs):
+        """Cancel a pending refund request."""
+        refund_request = self.get_object()
+        
+        # Can only cancel pending requests
+        if refund_request.status != RefundRequest.Status.PENDING:
+            return Response(
+                {'error': 'Chỉ có thể hủy yêu cầu hoàn tiền đang chờ xử lý.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check ownership
+        if refund_request.order.user != request.user:
+            return Response(
+                {'error': 'Bạn không có quyền hủy yêu cầu này.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        refund_request.status = RefundRequest.Status.CANCELLED
+        refund_request.save()
+        
+        return Response({'message': 'Đã hủy yêu cầu hoàn tiền.'})
+    
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def review(self, request, pk=None):
+        """
+        Review refund request (vendor/admin only).
+        
+        POST /orders/refunds/{id}/review/
+        {
+            "action": "approve" | "reject",
+            "amount": 50000,  // Optional - for partial refund
+            "note": "Reason for decision"
+        }
+        """
+        refund_request = self.get_object()
+        
+        # Check permission - must be vendor of the order or admin
+        user = request.user
+        is_vendor = hasattr(user, 'vendor_profile') and refund_request.order.items.filter(
+            vendor=user.vendor_profile
+        ).exists()
+        is_admin = user.is_staff or user.role == 'admin'
+        
+        if not (is_vendor or is_admin):
+            return Response(
+                {'error': 'Bạn không có quyền xử lý yêu cầu này.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Validate status - can only review pending/under_review requests
+        if refund_request.status not in [RefundRequest.Status.PENDING, RefundRequest.Status.UNDER_REVIEW]:
+            return Response(
+                {'error': 'Yêu cầu này đã được xử lý.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = ReviewRefundRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        
+        if data['action'] == 'approve':
+            refund_request.approve(
+                reviewed_by=user,
+                amount=data.get('amount'),
+                note=data.get('note', '')
+            )
+            message = 'Đã phê duyệt yêu cầu hoàn tiền.'
+        else:
+            refund_request.reject(
+                reviewed_by=user,
+                note=data.get('note', '')
+            )
+            message = 'Đã từ chối yêu cầu hoàn tiền.'
+        
+        # TODO: Send notification to customer
+        
+        return Response({
+            'message': message,
+            'refund_request': RefundRequestSerializer(refund_request).data
         })

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Order, OrderItem, OrderStatusHistory, SubOrder, SubOrderStatusHistory
+from .models import Order, OrderItem, OrderStatusHistory, SubOrder, SubOrderStatusHistory, RefundRequest
 
 
 class OrderItemInline(admin.TabularInline):
@@ -86,3 +86,32 @@ class SubOrderAdmin(admin.ModelAdmin):
             'created_at', 'updated_at', 'confirmed_at', 'shipped_at', 'delivered_at', 'cancelled_at'
         ), 'classes': ('collapse',)}),
     )
+
+
+@admin.register(RefundRequest)
+class RefundRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'order', 'reason', 'status', 'requested_amount', 
+        'approved_amount', 'created_at', 'reviewed_at'
+    )
+    list_filter = ('status', 'reason', 'created_at')
+    search_fields = ('order__order_number', 'description')
+    readonly_fields = (
+        'order', 'item', 'requested_amount', 'created_at', 'updated_at',
+        'refund_transaction_id', 'refunded_at'
+    )
+    raw_id_fields = ('reviewed_by',)
+    
+    fieldsets = (
+        (None, {'fields': ('order', 'item', 'reason', 'description')}),
+        ('Amount', {'fields': ('requested_amount', 'approved_amount')}),
+        ('Status', {'fields': ('status',)}),
+        ('Evidence', {'fields': ('evidence_images',)}),
+        ('Review', {'fields': ('reviewed_by', 'review_note', 'reviewed_at')}),
+        ('Refund Info', {'fields': ('refund_transaction_id', 'refunded_at'), 'classes': ('collapse',)}),
+        ('Timestamps', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )
+    
+    def has_add_permission(self, request):
+        # Refund requests should be created by users, not in admin
+        return False

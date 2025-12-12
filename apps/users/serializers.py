@@ -76,16 +76,35 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class AddressSerializer(serializers.ModelSerializer):
-    """Serializer for user addresses."""
+    """Serializer for user addresses with Vietnam-specific fields."""
+    
+    # Computed fields
+    full_address = serializers.ReadOnlyField()
     
     class Meta:
         model = Address
         fields = [
             'id', 'address_type', 'full_name', 'phone', 'street_address',
-            'apartment', 'city', 'state', 'country', 'postal_code',
-            'is_default', 'created_at', 'updated_at'
+            'apartment', 
+            # New Vietnam-specific fields
+            'province', 'province_id', 'district', 'district_id', 
+            'ward', 'ward_code',
+            # Legacy fields (read-only, for backward compatibility)
+            'city', 'state',
+            'country', 'postal_code',
+            'is_default', 'full_address', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'city', 'state', 'full_address', 'created_at', 'updated_at']
+    
+    def validate(self, attrs):
+        # Ensure Vietnam-specific fields are provided
+        if not attrs.get('province'):
+            raise serializers.ValidationError({'province': 'Tỉnh/Thành phố là bắt buộc.'})
+        if not attrs.get('district'):
+            raise serializers.ValidationError({'district': 'Quận/Huyện là bắt buộc.'})
+        if not attrs.get('ward'):
+            raise serializers.ValidationError({'ward': 'Phường/Xã là bắt buộc.'})
+        return attrs
     
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user

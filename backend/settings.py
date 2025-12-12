@@ -288,6 +288,21 @@ VNPAY_REFUND_URL = env('VNPAY_REFUND_URL', default='https://sandbox.vnpayment.vn
 DEFAULT_SHIPPING_COST = env.int('DEFAULT_SHIPPING_COST', default=30000)  # VND
 FREE_SHIPPING_THRESHOLD = env.int('FREE_SHIPPING_THRESHOLD', default=500000)  # Free shipping for orders >= 500k VND
 
+# GHN (Giao Hàng Nhanh) API Settings
+GHN_TOKEN = env('GHN_TOKEN', default='')
+GHN_SHOP_ID = env('GHN_SHOP_ID', default='')
+GHN_SANDBOX = env.bool('GHN_SANDBOX', default=True)
+GHN_FROM_DISTRICT_ID = env.int('GHN_FROM_DISTRICT_ID', default=1542)  # Default warehouse district
+GHN_FROM_WARD_CODE = env('GHN_FROM_WARD_CODE', default='21012')  # Default warehouse ward
+
+# GHTK (Giao Hàng Tiết Kiệm) API Settings
+GHTK_TOKEN = env('GHTK_TOKEN', default='')
+GHTK_SANDBOX = env.bool('GHTK_SANDBOX', default=True)
+GHTK_PICK_PROVINCE = env('GHTK_PICK_PROVINCE', default='Hồ Chí Minh')
+GHTK_PICK_DISTRICT = env('GHTK_PICK_DISTRICT', default='Quận 1')
+GHTK_PICK_WARD = env('GHTK_PICK_WARD', default='Phường Bến Nghé')
+GHTK_PICK_ADDRESS = env('GHTK_PICK_ADDRESS', default='')
+
 # Order Settings - Denial of Inventory Protection
 MAX_PENDING_ORDERS_PER_USER = env.int('MAX_PENDING_ORDERS_PER_USER', default=3)
 MAX_PENDING_ORDERS_PER_GUEST = env.int('MAX_PENDING_ORDERS_PER_GUEST', default=2)  # Per email in 24h

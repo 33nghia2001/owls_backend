@@ -72,7 +72,7 @@ class Users(AbstractBaseUser, PermissionsMixin):
 
 
 class Address(models.Model):
-    """User shipping/billing addresses."""
+    """User shipping/billing addresses with Vietnam-specific fields."""
     
     class AddressType(models.TextChoices):
         SHIPPING = 'shipping', 'Shipping'
@@ -84,12 +84,23 @@ class Address(models.Model):
     
     full_name = models.CharField(max_length=100)
     phone = PhoneNumberField()
-    street_address = models.CharField(max_length=255)
-    apartment = models.CharField(max_length=100, blank=True)
-    city = models.CharField(max_length=100)
-    state = models.CharField(max_length=100)
+    street_address = models.CharField(max_length=255)  # Số nhà, tên đường
+    apartment = models.CharField(max_length=100, blank=True)  # Tòa nhà, căn hộ
+    
+    # Vietnam administrative divisions - aligned with GHN API
+    province = models.CharField(max_length=100, verbose_name='Tỉnh/Thành phố')
+    province_id = models.IntegerField(null=True, blank=True, verbose_name='GHN Province ID')
+    district = models.CharField(max_length=100, verbose_name='Quận/Huyện')
+    district_id = models.IntegerField(null=True, blank=True, verbose_name='GHN District ID')
+    ward = models.CharField(max_length=100, verbose_name='Phường/Xã')
+    ward_code = models.CharField(max_length=20, blank=True, verbose_name='GHN Ward Code')
+    
+    # Legacy fields - kept for backward compatibility, will be removed in future
+    city = models.CharField(max_length=100, blank=True, editable=False)  # Deprecated, use province
+    state = models.CharField(max_length=100, blank=True, editable=False)  # Deprecated, use district
+    
     country = models.CharField(max_length=100, default='Vietnam')
-    postal_code = models.CharField(max_length=20)
+    postal_code = models.CharField(max_length=20, blank=True)  # Optional in Vietnam
     
     is_default = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -102,9 +113,24 @@ class Address(models.Model):
         ordering = ['-is_default', '-created_at']
     
     def __str__(self):
-        return f"{self.full_name} - {self.street_address}, {self.city}"
+        return f"{self.full_name} - {self.street_address}, {self.ward}, {self.district}, {self.province}"
+    
+    @property
+    def full_address(self):
+        """Return formatted full address."""
+        parts = [self.street_address]
+        if self.apartment:
+            parts.append(self.apartment)
+        parts.extend([self.ward, self.district, self.province])
+        return ', '.join(filter(None, parts))
     
     def save(self, *args, **kwargs):
+        # Sync legacy fields for backward compatibility
+        if self.province and not self.city:
+            self.city = self.province
+        if self.district and not self.state:
+            self.state = self.district
+            
         # Ensure only one default address per type per user
         if self.is_default:
             Address.objects.filter(

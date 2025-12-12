@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Order, OrderItem, OrderStatusHistory, SubOrder, SubOrderStatusHistory
+from .models import Order, OrderItem, OrderStatusHistory, SubOrder, SubOrderStatusHistory, RefundRequest
 from apps.products.serializers import ProductListSerializer
 from apps.shipping.constants import normalize_province_name, is_valid_province
 
@@ -190,3 +190,117 @@ class VendorOrderItemSerializer(serializers.ModelSerializer):
         order = obj.order
         # Format: Số nhà/Đường, Phường/Xã, Tỉnh/TP
         return f"{order.shipping_address}, {order.shipping_ward}, {order.shipping_province}"
+
+
+class RefundRequestSerializer(serializers.ModelSerializer):
+    """Serializer for refund requests."""
+    order_number = serializers.CharField(source='order.order_number', read_only=True)
+    item_name = serializers.CharField(source='item.product_name', read_only=True, allow_null=True)
+    reviewed_by_email = serializers.CharField(source='reviewed_by.email', read_only=True, allow_null=True)
+    reason_display = serializers.CharField(source='get_reason_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = RefundRequest
+        fields = [
+            'id', 'order', 'order_number', 'sub_order', 'item', 'item_name',
+            'reason', 'reason_display', 'description',
+            'requested_amount', 'approved_amount',
+            'status', 'status_display',
+            'evidence_images',
+            'reviewed_by', 'reviewed_by_email', 'review_note', 'reviewed_at',
+            'refund_transaction_id', 'refunded_at',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'approved_amount', 'status', 
+            'reviewed_by', 'review_note', 'reviewed_at',
+            'refund_transaction_id', 'refunded_at',
+            'created_at', 'updated_at'
+        ]
+
+
+class CreateRefundRequestSerializer(serializers.Serializer):
+    """Serializer for creating refund requests."""
+    order_id = serializers.UUIDField()
+    item_id = serializers.UUIDField(required=False, allow_null=True)
+    reason = serializers.ChoiceField(choices=RefundRequest.Reason.choices)
+    description = serializers.CharField(min_length=20, max_length=2000)
+    evidence_images = serializers.ListField(
+        child=serializers.URLField(),
+        required=False,
+        max_length=5  # Max 5 images
+    )
+    
+    def validate_order_id(self, value):
+        """Validate order exists and belongs to user."""
+        user = self.context['request'].user
+        try:
+            order = Order.objects.get(id=value, user=user)
+        except Order.DoesNotExist:
+            raise serializers.ValidationError('Đơn hàng không tồn tại.')
+        
+        # Check if order is eligible for refund
+        if order.status in [Order.Status.PENDING, Order.Status.CANCELLED, Order.Status.REFUNDED]:
+            raise serializers.ValidationError(
+                f'Đơn hàng có trạng thái "{order.get_status_display()}" không thể yêu cầu hoàn tiền.'
+            )
+        
+        # Check if refund already requested
+        if order.refund_requests.filter(
+            status__in=[RefundRequest.Status.PENDING, RefundRequest.Status.UNDER_REVIEW, 
+                       RefundRequest.Status.APPROVED, RefundRequest.Status.PROCESSING]
+        ).exists():
+            raise serializers.ValidationError('Đơn hàng này đã có yêu cầu hoàn tiền đang xử lý.')
+        
+        return value
+    
+    def validate_item_id(self, value):
+        """Validate item belongs to the order."""
+        if not value:
+            return value
+        
+        order_id = self.initial_data.get('order_id')
+        if order_id:
+            try:
+                item = OrderItem.objects.get(id=value, order_id=order_id)
+                # Check if item already has pending refund
+                if item.refund_requests.filter(
+                    status__in=[RefundRequest.Status.PENDING, RefundRequest.Status.UNDER_REVIEW]
+                ).exists():
+                    raise serializers.ValidationError('Sản phẩm này đã có yêu cầu hoàn tiền đang xử lý.')
+            except OrderItem.DoesNotExist:
+                raise serializers.ValidationError('Sản phẩm không tồn tại trong đơn hàng.')
+        
+        return value
+    
+    def create(self, validated_data):
+        order = Order.objects.get(id=validated_data['order_id'])
+        item = None
+        if validated_data.get('item_id'):
+            item = OrderItem.objects.get(id=validated_data['item_id'])
+        
+        # Calculate requested amount
+        if item:
+            requested_amount = item.total_price
+        else:
+            requested_amount = order.total
+        
+        return RefundRequest.objects.create(
+            order=order,
+            item=item,
+            reason=validated_data['reason'],
+            description=validated_data['description'],
+            evidence_images=validated_data.get('evidence_images', []),
+            requested_amount=requested_amount,
+        )
+
+
+class ReviewRefundRequestSerializer(serializers.Serializer):
+    """Serializer for reviewing refund requests (vendor/admin)."""
+    action = serializers.ChoiceField(choices=['approve', 'reject'])
+    amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, 
+        required=False, allow_null=True
+    )  # Only for partial refunds
+    note = serializers.CharField(required=False, allow_blank=True, max_length=1000)
