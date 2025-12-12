@@ -11,7 +11,13 @@ environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
+
+# ALLOWED_HOSTS configuration
+# In production, set ALLOWED_HOSTS env var. Koyeb auto-sets KOYEB=true
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
+if not ALLOWED_HOSTS and not DEBUG:
+    # For Koyeb deployment - allow all .koyeb.app domains
+    ALLOWED_HOSTS = ['.koyeb.app', 'localhost', '127.0.0.1']
 
 # Frontend URL (for redirects after payment, etc.)
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
@@ -162,23 +168,27 @@ AUTH_USER_MODEL = 'users.Users'
 # as this creates a severe security vulnerability (CSRF/credential theft).
 # Example for production .env:
 #   CORS_ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-])
+CORS_ALLOWED_ORIGINS = [
+    origin.rstrip('/') for origin in env.list('CORS_ALLOWED_ORIGINS', default=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ])
+]
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-])
+CSRF_TRUSTED_ORIGINS = [
+    origin.rstrip('/') for origin in env.list('CSRF_TRUSTED_ORIGINS', default=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ])
+]
 
 INTERNAL_IPS = ["127.0.0.1"]
 
