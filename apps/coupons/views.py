@@ -5,9 +5,42 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import ScopedRateThrottle
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
+import re
 
 from .models import Coupon, CouponUsage
 from .serializers import CouponSerializer, ApplyCouponSerializer
+
+
+def normalize_email(email: str) -> str:
+    """
+    Normalize email to prevent abuse via aliases.
+    - Lowercase the entire email
+    - For Gmail: remove dots and +alias parts from local part
+    - For other providers: just remove +alias parts
+    
+    Examples:
+    - user.name+alias@gmail.com -> username@gmail.com
+    - user+test@example.com -> user@example.com
+    """
+    if not email:
+        return email
+    
+    email = email.lower().strip()
+    
+    try:
+        local_part, domain = email.rsplit('@', 1)
+    except ValueError:
+        return email
+    
+    # Remove +alias part for all providers
+    local_part = local_part.split('+')[0]
+    
+    # For Gmail (and Google-hosted domains), also remove dots
+    gmail_domains = ['gmail.com', 'googlemail.com']
+    if domain in gmail_domains:
+        local_part = local_part.replace('.', '')
+    
+    return f'{local_part}@{domain}'
 
 
 class SensitiveRateThrottle(ScopedRateThrottle):
@@ -87,9 +120,12 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
                     'error': 'Invalid email address.'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check guest email usage
+            # SECURITY: Normalize email to prevent alias abuse (user+1@gmail.com, u.ser@gmail.com)
+            normalized_email = normalize_email(guest_email)
+            
+            # Check guest email usage with normalized email
             guest_usage = CouponUsage.objects.filter(
-                coupon=coupon, guest_email__iexact=guest_email
+                coupon=coupon, guest_email__iexact=normalized_email
             ).count()
             if guest_usage >= coupon.usage_limit_per_user:
                 return Response({

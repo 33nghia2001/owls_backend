@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Order, OrderItem, OrderStatusHistory
 from apps.products.serializers import ProductListSerializer
+from apps.shipping.constants import normalize_province_name, is_valid_province
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -95,6 +96,26 @@ class CreateOrderSerializer(serializers.Serializer):
     
     # Payment method
     payment_method = serializers.ChoiceField(choices=['cod', 'stripe', 'vnpay'])
+    
+    def validate_shipping_province(self, value):
+        """Validate and normalize shipping province name."""
+        normalized = normalize_province_name(value)
+        if not normalized:
+            raise serializers.ValidationError(
+                f'Tỉnh/Thành phố "{value}" không hợp lệ. Vui lòng chọn từ danh sách tỉnh thành Việt Nam.'
+            )
+        return normalized
+    
+    def validate_billing_province(self, value):
+        """Validate and normalize billing province name if provided."""
+        if not value:
+            return value
+        normalized = normalize_province_name(value)
+        if not normalized:
+            raise serializers.ValidationError(
+                f'Tỉnh/Thành phố "{value}" không hợp lệ. Vui lòng chọn từ danh sách tỉnh thành Việt Nam.'
+            )
+        return normalized
 
 
 class UpdateOrderStatusSerializer(serializers.Serializer):

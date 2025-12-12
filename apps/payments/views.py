@@ -48,18 +48,19 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         return ip
 
     def _send_alert_email(self, subject, message):
-        """Gửi email cảnh báo khẩn cấp cho Admin."""
+        """
+        Queue urgent alert email for admin via Celery task.
+        Non-blocking to prevent IPN webhook timeouts.
+        """
+        from .tasks import send_payment_alert_email_task
+        
         try:
-            admin_email = getattr(settings, 'ADMIN_EMAIL', settings.DEFAULT_FROM_EMAIL)
-            send_mail(
-                subject=f"[URGENT - PAYMENT ALERT] {subject}",
-                message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[admin_email],
-                fail_silently=True
-            )
+            # Queue task asynchronously - returns immediately
+            send_payment_alert_email_task.delay(subject, message)
+            logger.info(f"Payment alert email queued: {subject}")
         except Exception as e:
-            logger.error(f"Failed to send alert email: {e}")
+            # If Celery is down, log the error but don't block
+            logger.error(f"Failed to queue alert email: {e}. Subject: {subject}")
 
     @action(detail=False, methods=['post'])
     def create_payment(self, request):

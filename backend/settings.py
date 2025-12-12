@@ -289,6 +289,9 @@ FREE_SHIPPING_THRESHOLD = env.int('FREE_SHIPPING_THRESHOLD', default=500000)  # 
 
 # Order Settings - Denial of Inventory Protection
 MAX_PENDING_ORDERS_PER_USER = env.int('MAX_PENDING_ORDERS_PER_USER', default=3)
+MAX_PENDING_ORDERS_PER_GUEST = env.int('MAX_PENDING_ORDERS_PER_GUEST', default=2)  # Per email in 24h
+MAX_ORDERS_PER_IP_PER_HOUR = env.int('MAX_ORDERS_PER_IP_PER_HOUR', default=5)  # IP-based limit
+GUEST_ORDER_RATE_LIMIT = env('GUEST_ORDER_RATE_LIMIT', default='3/hour')  # Throttle rate
 PENDING_ORDER_TIMEOUT_MINUTES = env.int('PENDING_ORDER_TIMEOUT_MINUTES', default=15)
 
 # Vendor Payout Settings - Hold period before release

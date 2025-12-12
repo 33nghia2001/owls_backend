@@ -2,13 +2,14 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import ScopedRateThrottle, AnonRateThrottle
 from rest_framework.exceptions import ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import F
 from django.conf import settings
+from django.core.cache import cache
 
 from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import (
@@ -24,6 +25,32 @@ from apps.inventory.models import Inventory, InventoryMovement
 class SensitiveRateThrottle(ScopedRateThrottle):
     """Custom throttle for sensitive operations like order creation."""
     scope = 'sensitive'
+
+
+class GuestOrderRateThrottle(AnonRateThrottle):
+    """
+    Strict IP-based rate limiting for guest order creation.
+    Prevents inventory hoarding attacks by limiting orders per IP.
+    """
+    scope = 'guest_order'
+    
+    def get_cache_key(self, request, view):
+        """Use IP address as the unique identifier for guests."""
+        if request.user.is_authenticated:
+            return None  # Don't throttle authenticated users here
+        
+        ident = self.get_ident(request)
+        return self.cache_format % {
+            'scope': self.scope,
+            'ident': ident
+        }
+    
+    def get_rate(self):
+        """
+        Guest can create max 3 orders per hour per IP.
+        This is much stricter than authenticated user rate.
+        """
+        return getattr(settings, 'GUEST_ORDER_RATE_LIMIT', '3/hour')
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -67,9 +94,13 @@ class OrderViewSet(viewsets.ModelViewSet):
         ).order_by('-created_at')
     
     def get_throttles(self):
-        """Apply stricter throttling for order creation."""
+        """Apply stricter throttling for order creation, especially for guests."""
         if self.action == 'create':
-            return [SensitiveRateThrottle()]
+            throttles = [SensitiveRateThrottle()]
+            # Add extra strict throttling for guest users
+            if not self.request.user.is_authenticated:
+                throttles.append(GuestOrderRateThrottle())
+            return throttles
         return super().get_throttles()
     
     @transaction.atomic
@@ -131,6 +162,44 @@ class OrderViewSet(viewsets.ModelViewSet):
                     {'error': f'Bạn đã có {pending_order_count} đơn hàng chưa thanh toán. Vui lòng thanh toán hoặc hủy trước khi đặt đơn mới.'},
                     status=status.HTTP_429_TOO_MANY_REQUESTS
                 )
+        else:
+            # Guest user: Check pending orders by IP to prevent inventory hoarding
+            guest_email = data.get('guest_email', '').lower().strip()
+            client_ip = self._get_client_ip(request)
+            
+            # Check by guest email (if provided)
+            if guest_email:
+                guest_pending_by_email = Order.objects.filter(
+                    guest_email__iexact=guest_email,
+                    status='pending',
+                    payment_status='pending',
+                    created_at__gte=timezone.now() - timezone.timedelta(hours=24)
+                ).count()
+                max_guest_pending = getattr(settings, 'MAX_PENDING_ORDERS_PER_GUEST', 2)
+                if guest_pending_by_email >= max_guest_pending:
+                    return Response(
+                        {'error': f'Email này đã có {guest_pending_by_email} đơn hàng chưa thanh toán trong 24h qua. Vui lòng thanh toán hoặc chờ đơn cũ hết hạn.'},
+                        status=status.HTTP_429_TOO_MANY_REQUESTS
+                    )
+            
+            # Check by IP (stricter limit stored in cache)
+            ip_order_key = f'guest_orders_ip:{client_ip}'
+            ip_order_count = cache.get(ip_order_key, 0)
+            max_orders_per_ip = getattr(settings, 'MAX_ORDERS_PER_IP_PER_HOUR', 5)
+            if ip_order_count >= max_orders_per_ip:
+                return Response(
+                    {'error': 'Đã đạt giới hạn số đơn hàng. Vui lòng thử lại sau 1 giờ.'},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+    
+    def _get_client_ip(self, request):
+        """Get real client IP, handling proxies."""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
+        return ip
         
         # 1. CHECK INVENTORY AND VALIDATE PRICES BEFORE CREATING ORDER
         inventory_updates = []  # Store inventory objects to update later
@@ -312,6 +381,16 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order=order,
                 discount_applied=order.discount_amount
             )
+        
+        # Increment IP order counter for guest users (to prevent inventory hoarding)
+        if not user:
+            client_ip = self._get_client_ip(request)
+            ip_order_key = f'guest_orders_ip:{client_ip}'
+            try:
+                cache.incr(ip_order_key)
+            except ValueError:
+                # Key doesn't exist, set it with 1 hour timeout
+                cache.set(ip_order_key, 1, timeout=3600)
         
         return Response(
             OrderDetailSerializer(order).data,

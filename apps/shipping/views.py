@@ -1,11 +1,25 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes as perm
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 
 from .models import ShippingMethod, Shipment
 from .serializers import ShippingMethodSerializer, ShipmentSerializer
+from .constants import VIETNAM_PROVINCES
+
+
+@api_view(['GET'])
+@perm([AllowAny])
+def get_provinces(request):
+    """
+    Get list of valid Vietnam provinces for address validation.
+    Used by frontend for address form dropdowns.
+    """
+    return Response({
+        'provinces': VIETNAM_PROVINCES,
+        'country': 'Vietnam'
+    })
 
 
 class ShippingMethodViewSet(viewsets.ReadOnlyModelViewSet):

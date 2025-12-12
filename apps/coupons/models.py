@@ -147,7 +147,9 @@ class CouponUsage(models.Model):
         null=True,
         blank=True
     )
-    guest_email = models.EmailField(blank=True, db_index=True)  # For guest checkout tracking
+    # SECURITY: Store normalized email to prevent alias abuse
+    # Original email stored in order, this is for usage tracking
+    guest_email = models.EmailField(blank=True, db_index=True)  # Normalized email for tracking
     order = models.ForeignKey(
         'orders.Order',
         on_delete=models.SET_NULL,
@@ -162,3 +164,30 @@ class CouponUsage(models.Model):
         db_table = 'coupon_usages'
         verbose_name = 'Coupon Usage'
         verbose_name_plural = 'Coupon Usages'
+    
+    def save(self, *args, **kwargs):
+        """Normalize guest_email before saving."""
+        if self.guest_email:
+            self.guest_email = self._normalize_email(self.guest_email)
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        """Normalize email to prevent alias abuse."""
+        if not email:
+            return email
+        
+        email = email.lower().strip()
+        try:
+            local_part, domain = email.rsplit('@', 1)
+        except ValueError:
+            return email
+        
+        # Remove +alias part
+        local_part = local_part.split('+')[0]
+        
+        # For Gmail, also remove dots
+        if domain in ['gmail.com', 'googlemail.com']:
+            local_part = local_part.replace('.', '')
+        
+        return f'{local_part}@{domain}'

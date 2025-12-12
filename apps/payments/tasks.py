@@ -173,3 +173,40 @@ def sync_payment_status_task(self, payment_id):
         logger.info(f"Checking VNPay status for payment {payment_id}")
     
     return {'success': True, 'status': payment.status}
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=300,  # Max 5 minutes between retries
+    retry_kwargs={'max_retries': 3},
+)
+def send_payment_alert_email_task(self, subject, message):
+    """
+    Send urgent payment alert email to admin asynchronously.
+    
+    This prevents blocking the IPN webhook response when email
+    delivery is slow or fails.
+    
+    Args:
+        subject: Email subject (will be prefixed with [URGENT - PAYMENT ALERT])
+        message: Email body text
+    """
+    try:
+        admin_email = getattr(settings, 'ADMIN_EMAIL', settings.DEFAULT_FROM_EMAIL)
+        
+        send_mail(
+            subject=f"[URGENT - PAYMENT ALERT] {subject}",
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[admin_email],
+            fail_silently=False  # Raise exception so Celery can retry
+        )
+        
+        logger.info(f"Payment alert email sent: {subject}")
+        return {'success': True, 'subject': subject}
+        
+    except Exception as e:
+        logger.error(f"Failed to send payment alert email: {e}")
+        raise  # Re-raise for Celery retry
