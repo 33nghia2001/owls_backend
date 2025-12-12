@@ -106,14 +106,34 @@ class ProductListSerializer(serializers.ModelSerializer):
     is_on_sale = serializers.ReadOnlyField()
     discount_percentage = serializers.ReadOnlyField()
     has_variants = serializers.SerializerMethodField()
+    is_active = serializers.SerializerMethodField()
+    inventory_quantity = serializers.SerializerMethodField()
     
     class Meta:
         model = Product
         fields = [
-            'id', 'name', 'slug', 'price', 'compare_price', 'is_on_sale',
+            'id', 'name', 'slug', 'sku', 'price', 'compare_price', 'is_on_sale',
             'discount_percentage', 'primary_image', 'vendor_name', 'category_name',
-            'rating', 'review_count', 'sold_count', 'is_featured', 'has_variants'
+            'rating', 'review_count', 'sold_count', 'is_featured', 'has_variants',
+            'is_active', 'status', 'inventory_quantity'
         ]
+    
+    def get_is_active(self, obj):
+        """Return True if product is published and active."""
+        return obj.status == 'published'
+    
+    def get_inventory_quantity(self, obj):
+        """Get inventory quantity for the product."""
+        # Only include for vendor's own products (via context)
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            if hasattr(request.user, 'vendor_profile') and obj.vendor == request.user.vendor_profile:
+                # Return inventory for vendor's own products
+                try:
+                    return obj.inventory.quantity if hasattr(obj, 'inventory') else 0
+                except Exception:
+                    return 0
+        return None  # Don't expose inventory to other users
     
     def get_has_variants(self, obj):
         """Check if product has active variants."""

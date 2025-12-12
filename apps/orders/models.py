@@ -58,8 +58,11 @@ class Order(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,  # Allow guest orders
         related_name='orders'
     )
+    # Guest checkout email (for orders without user account)
+    guest_email = models.EmailField(blank=True, null=True, db_index=True)
     
     # Status
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)

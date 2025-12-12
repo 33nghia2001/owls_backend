@@ -5,12 +5,53 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import logout
+from django.conf import settings
 
 from .models import Users, Address
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, UserLoginSerializer,
     ChangePasswordSerializer, AddressSerializer
 )
+
+
+# Cookie settings for JWT tokens
+JWT_COOKIE_SECURE = not settings.DEBUG  # True in production (HTTPS only)
+JWT_COOKIE_HTTPONLY = True
+JWT_COOKIE_SAMESITE = 'Lax'  # 'Strict' for more security, 'None' for cross-site
+JWT_ACCESS_COOKIE_NAME = 'access_token'
+JWT_REFRESH_COOKIE_NAME = 'refresh_token'
+JWT_ACCESS_MAX_AGE = 60 * 15  # 15 minutes
+JWT_REFRESH_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+
+
+def set_jwt_cookies(response, access_token, refresh_token):
+    """Helper function to set JWT tokens as httpOnly cookies."""
+    response.set_cookie(
+        JWT_ACCESS_COOKIE_NAME,
+        access_token,
+        max_age=JWT_ACCESS_MAX_AGE,
+        httponly=JWT_COOKIE_HTTPONLY,
+        secure=JWT_COOKIE_SECURE,
+        samesite=JWT_COOKIE_SAMESITE,
+        path='/',
+    )
+    response.set_cookie(
+        JWT_REFRESH_COOKIE_NAME,
+        refresh_token,
+        max_age=JWT_REFRESH_MAX_AGE,
+        httponly=JWT_COOKIE_HTTPONLY,
+        secure=JWT_COOKIE_SECURE,
+        samesite=JWT_COOKIE_SAMESITE,
+        path='/api/v1/auth/',  # Match actual API endpoint path
+    )
+    return response
+
+
+def clear_jwt_cookies(response):
+    """Helper function to clear JWT cookies on logout."""
+    response.delete_cookie(JWT_ACCESS_COOKIE_NAME, path='/')
+    response.delete_cookie(JWT_REFRESH_COOKIE_NAME, path='/api/v1/auth/')
+    return response
 
 
 class LoginRateThrottle(ScopedRateThrottle):
@@ -30,46 +71,57 @@ class AuthViewSet(viewsets.ViewSet):
         user = serializer.save()
         
         refresh = RefreshToken.for_user(user)
-        return Response({
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+        
+        response = Response({
             'user': UserSerializer(user).data,
-            'tokens': {
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            }
+            'message': 'Registration successful',
         }, status=status.HTTP_201_CREATED)
+        
+        # Set httpOnly cookies
+        return set_jwt_cookies(response, access_token, refresh_token)
     
     @action(detail=False, methods=['post'], throttle_classes=[LoginRateThrottle])
     def login(self, request):
-        """Login user and return tokens."""
+        """Login user and return tokens in httpOnly cookies."""
         serializer = UserLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
         
         refresh = RefreshToken.for_user(user)
-        return Response({
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+        
+        response = Response({
             'user': UserSerializer(user).data,
-            'tokens': {
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            }
+            'message': 'Login successful',
         })
+        
+        # Set httpOnly cookies
+        return set_jwt_cookies(response, access_token, refresh_token)
     
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def logout(self, request):
-        """Logout user and blacklist refresh token."""
+        """Logout user, blacklist refresh token and clear cookies."""
         try:
-            refresh_token = request.data.get('refresh')
+            # Try to get refresh token from cookie first, then from body
+            refresh_token = request.COOKIES.get(JWT_REFRESH_COOKIE_NAME) or request.data.get('refresh')
             if refresh_token:
                 token = RefreshToken(refresh_token)
                 token.blacklist()
-            return Response({'message': 'Successfully logged out.'})
         except Exception:
-            return Response({'message': 'Logged out.'})
+            pass  # Token might be invalid or already blacklisted
+        
+        response = Response({'message': 'Successfully logged out.'})
+        return clear_jwt_cookies(response)
     
     @action(detail=False, methods=['post'])
     def token_refresh(self, request):
-        """Refresh access token using refresh token."""
-        refresh_token = request.data.get('refresh')
+        """Refresh access token using refresh token from httpOnly cookie."""
+        # Get refresh token from cookie first, then from body (for backward compatibility)
+        refresh_token = request.COOKIES.get(JWT_REFRESH_COOKIE_NAME) or request.data.get('refresh')
+        
         if not refresh_token:
             return Response(
                 {'detail': 'Refresh token is required.'},
@@ -78,15 +130,22 @@ class AuthViewSet(viewsets.ViewSet):
         
         try:
             refresh = RefreshToken(refresh_token)
-            return Response({
-                'access': str(refresh.access_token),
-                'refresh': str(refresh),  # Return new refresh token if ROTATE_REFRESH_TOKENS is True
+            access_token = str(refresh.access_token)
+            new_refresh_token = str(refresh)  # New token if ROTATE_REFRESH_TOKENS is True
+            
+            response = Response({
+                'message': 'Token refreshed successfully',
             })
-        except Exception as e:
-            return Response(
+            
+            # Set new httpOnly cookies
+            return set_jwt_cookies(response, access_token, new_refresh_token)
+        except Exception:
+            response = Response(
                 {'detail': 'Invalid or expired refresh token.'},
                 status=status.HTTP_401_UNAUTHORIZED
             )
+            # Clear invalid cookies
+            return clear_jwt_cookies(response)
 
 
 class UserViewSet(viewsets.ModelViewSet):

@@ -257,6 +257,14 @@ class ProductTagViewSet(viewsets.ModelViewSet):
     """ViewSet for product tags."""
     queryset = ProductTag.objects.all()
     serializer_class = ProductTagSerializer
-    permission_classes = [AllowAny]
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
+    
+    def get_permissions(self):
+        """
+        - list, retrieve: Allow anyone to browse tags
+        - create, update, destroy: Only approved vendors can manage tags
+        """
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated(), IsApprovedVendor()]

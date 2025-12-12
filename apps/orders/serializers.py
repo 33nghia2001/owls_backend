@@ -63,6 +63,10 @@ class OrderDetailSerializer(serializers.ModelSerializer):
 class CreateOrderSerializer(serializers.Serializer):
     """Serializer for creating orders from cart."""
     
+    # Guest checkout fields
+    guest_email = serializers.EmailField(required=False, allow_blank=True)
+    guest_cart_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    
     # Shipping Address
     shipping_name = serializers.CharField(max_length=100)
     shipping_phone = serializers.CharField(max_length=20)

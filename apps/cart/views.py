@@ -139,7 +139,7 @@ class CartViewSet(viewsets.ViewSet):
         
         return Response(CartSerializer(cart).data, status=status.HTTP_201_CREATED)
     
-    @action(detail=False, methods=['put'], url_path='items/(?P<item_id>[^/.]+)')
+    @action(detail=False, methods=['patch', 'put'], url_path='items/(?P<item_id>[^/.]+)')
     def update_item(self, request, item_id=None):
         """Update cart item quantity."""
         serializer = UpdateCartItemSerializer(data=request.data)
@@ -171,3 +171,76 @@ class CartViewSet(viewsets.ViewSet):
         cart = self.get_cart(request)
         cart.clear()
         return Response(CartSerializer(cart).data)
+    
+    @action(detail=False, methods=['post'])
+    def apply_coupon(self, request):
+        """Apply a coupon code to the cart."""
+        from apps.coupons.models import Coupon
+        from django.utils import timezone
+        
+        code = request.data.get('code')
+        if not code:
+            return Response(
+                {'error': 'Mã giảm giá không được để trống'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        cart = self.get_cart(request)
+        
+        try:
+            coupon = Coupon.objects.get(
+                code__iexact=code,
+                is_active=True,
+                start_date__lte=timezone.now(),
+                end_date__gte=timezone.now()
+            )
+            
+            # Check usage limits
+            if coupon.usage_limit and coupon.used_count >= coupon.usage_limit:
+                return Response(
+                    {'error': 'Mã giảm giá đã hết lượt sử dụng'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check minimum order amount
+            if coupon.min_order_amount and cart.subtotal < coupon.min_order_amount.amount:
+                return Response(
+                    {'error': f'Đơn hàng tối thiểu {coupon.min_order_amount} để áp dụng mã này'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Calculate discount
+            discount_amount = 0
+            if coupon.discount_type == 'percentage':
+                discount_amount = cart.subtotal * (coupon.discount_value / 100)
+                if coupon.max_discount_amount:
+                    discount_amount = min(discount_amount, coupon.max_discount_amount.amount)
+            elif coupon.discount_type == 'fixed':
+                discount_amount = coupon.discount_value
+            
+            # Return cart with coupon info
+            cart_data = CartSerializer(cart).data
+            cart_data['coupon'] = {
+                'code': coupon.code,
+                'discount_type': coupon.discount_type,
+                'discount_value': str(coupon.discount_value),
+                'discount_amount': str(discount_amount),
+            }
+            cart_data['discount_amount'] = str(discount_amount)
+            
+            return Response(cart_data)
+            
+        except Coupon.DoesNotExist:
+            return Response(
+                {'error': 'Mã giảm giá không hợp lệ hoặc đã hết hạn'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=False, methods=['post'])
+    def remove_coupon(self, request):
+        """Remove applied coupon from cart."""
+        cart = self.get_cart(request)
+        cart_data = CartSerializer(cart).data
+        cart_data['coupon'] = None
+        cart_data['discount_amount'] = '0'
+        return Response(cart_data)

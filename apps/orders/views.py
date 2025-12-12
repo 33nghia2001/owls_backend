@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import ScopedRateThrottle
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
@@ -27,10 +27,18 @@ class SensitiveRateThrottle(ScopedRateThrottle):
 
 class OrderViewSet(viewsets.ModelViewSet):
     """ViewSet for customer orders."""
-    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['status', 'payment_status']
     ordering_fields = ['created_at', 'total']
+    
+    def get_permissions(self):
+        """
+        - create: Allow guest checkout (AllowAny)
+        - list, retrieve, update, destroy: Require authentication
+        """
+        if self.action == 'create':
+            return [AllowAny()]
+        return [IsAuthenticated()]
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -41,6 +49,10 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         # Optimized query with select_related and prefetch_related
+        # Only authenticated users can list their orders
+        if not self.request.user.is_authenticated:
+            return Order.objects.none()
+        
         return Order.objects.filter(
             user=self.request.user
         ).select_related(
@@ -61,23 +73,39 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     @transaction.atomic
     def create(self, request):
-        """Create order from cart."""
+        """Create order from cart. Supports both authenticated users and guests."""
         serializer = CreateOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         
-        # Get user's cart
-        try:
-            cart = Cart.objects.get(user=request.user)
-        except Cart.DoesNotExist:
+        # Get cart - for authenticated user or guest via session_key
+        cart = None
+        user = request.user if request.user.is_authenticated else None
+        guest_cart_id = data.get('guest_cart_id') or request.data.get('guest_cart_id')
+        
+        if user:
+            # Authenticated user
+            try:
+                cart = Cart.objects.get(user=user)
+            except Cart.DoesNotExist:
+                pass
+        
+        if not cart and guest_cart_id:
+            # Guest checkout with cart ID
+            try:
+                cart = Cart.objects.get(session_key=guest_cart_id, user__isnull=True)
+            except Cart.DoesNotExist:
+                pass
+        
+        if not cart:
             return Response(
-                {'error': 'Cart is empty.'},
+                {'error': 'Giỏ hàng trống hoặc không tìm thấy.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         if not cart.items.exists():
             return Response(
-                {'error': 'Cart is empty.'},
+                {'error': 'Giỏ hàng trống.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -89,13 +117,19 @@ class OrderViewSet(viewsets.ModelViewSet):
         ).order_by('product__id', 'variant__id')
         
         # Check limit on pending orders per user to prevent Denial of Inventory attack
-        pending_order_count = Order.objects.filter(
-            user=request.user,
-            status='pending',
-            payment_status='pending'
-        ).count()
-        max_pending_orders = getattr(settings, 'MAX_PENDING_ORDERS_PER_USER', 3)
-        if pending_order_count >= max_pending_orders:
+        # For guests, use guest email or skip this check (handled by rate limiting)
+        if user:
+            pending_order_count = Order.objects.filter(
+                user=user,
+                status='pending',
+                payment_status='pending'
+            ).count()
+            max_pending_orders = getattr(settings, 'MAX_PENDING_ORDERS_PER_USER', 3)
+            if pending_order_count >= max_pending_orders:
+                return Response(
+                    {'error': f'Bạn đã có {pending_order_count} đơn hàng chưa thanh toán. Vui lòng thanh toán hoặc hủy trước khi đặt đơn mới.'},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
             return Response(
                 {'error': f'Bạn đã có {pending_order_count} đơn hàng chưa thanh toán. Vui lòng thanh toán hoặc hủy trước khi đặt đơn mới.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS
@@ -176,9 +210,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         total = subtotal + shipping_cost - discount_amount
         
-        # Create order
+        # Create order (user can be None for guest checkout)
         order = Order.objects.create(
-            user=request.user,
+            user=user,  # Can be None for guest orders
+            guest_email=data.get('guest_email') if not user else None,
             subtotal=subtotal,
             shipping_cost=shipping_cost,
             discount_amount=discount_amount,

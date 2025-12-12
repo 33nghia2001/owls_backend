@@ -71,6 +71,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'backend.middleware.JWTCookieMiddleware',  # Extract JWT from httpOnly cookie
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'debug_toolbar.middleware.DebugToolbarMiddleware',
@@ -285,6 +286,31 @@ PENDING_ORDER_TIMEOUT_MINUTES = env.int('PENDING_ORDER_TIMEOUT_MINUTES', default
 
 # Vendor Payout Settings - Hold period before release
 VENDOR_PAYOUT_HOLD_DAYS = env.int('VENDOR_PAYOUT_HOLD_DAYS', default=7)
+
+# ===========================================
+# Production Security Settings
+# ===========================================
+# These settings are enabled when DEBUG=False
+if not DEBUG:
+    # HTTPS Security
+    SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    
+    # Cookie Security
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    
+    # HTTP Strict Transport Security (HSTS)
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=31536000)  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    
+    # Content Security
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    
+    # Referrer Policy
+    SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # Django Channels (WebSocket) Configuration
 ASGI_APPLICATION = 'backend.asgi.application'

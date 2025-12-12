@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Review, ReviewImage, ReviewHelpful, VendorReview
+import bleach
 
 
 class ReviewImageSerializer(serializers.ModelSerializer):
@@ -48,6 +49,18 @@ class CreateReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = ['product', 'order_item', 'rating', 'title', 'comment', 'images']
+    
+    def validate_title(self, value):
+        """Sanitize review title to prevent XSS."""
+        if value:
+            return bleach.clean(value, tags=[], strip=True)
+        return value
+    
+    def validate_comment(self, value):
+        """Sanitize review comment to prevent XSS."""
+        if value:
+            return bleach.clean(value, tags=[], strip=True)
+        return value
     
     def validate(self, attrs):
         user = self.context['request'].user
