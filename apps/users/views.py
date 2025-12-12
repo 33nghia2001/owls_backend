@@ -17,7 +17,10 @@ from .serializers import (
 # Cookie settings for JWT tokens
 JWT_COOKIE_SECURE = not settings.DEBUG  # True in production (HTTPS only)
 JWT_COOKIE_HTTPONLY = True
-JWT_COOKIE_SAMESITE = 'Lax'  # 'Strict' for more security, 'None' for cross-site
+# SECURITY: Use 'Lax' for better compatibility
+# Lax prevents CSRF in most cases while allowing cookies in safe cross-site scenarios
+# (like redirects after external auth). Strict blocks too many legitimate cases.
+JWT_COOKIE_SAMESITE = 'Lax'
 JWT_ACCESS_COOKIE_NAME = 'access_token'
 JWT_REFRESH_COOKIE_NAME = 'refresh_token'
 JWT_ACCESS_MAX_AGE = 60 * 15  # 15 minutes
@@ -42,7 +45,7 @@ def set_jwt_cookies(response, access_token, refresh_token):
         httponly=JWT_COOKIE_HTTPONLY,
         secure=JWT_COOKIE_SECURE,
         samesite=JWT_COOKIE_SAMESITE,
-        path='/api/v1/auth/',  # Match actual API endpoint path
+        path='/',  # Set to root path so it's sent with all API requests
     )
     return response
 
@@ -50,7 +53,7 @@ def set_jwt_cookies(response, access_token, refresh_token):
 def clear_jwt_cookies(response):
     """Helper function to clear JWT cookies on logout."""
     response.delete_cookie(JWT_ACCESS_COOKIE_NAME, path='/')
-    response.delete_cookie(JWT_REFRESH_COOKIE_NAME, path='/api/v1/auth/')
+    response.delete_cookie(JWT_REFRESH_COOKIE_NAME, path='/')
     return response
 
 
@@ -126,6 +129,11 @@ class AuthViewSet(viewsets.ViewSet):
         """Refresh access token using refresh token from httpOnly cookie."""
         # Get refresh token from cookie first, then from body (for backward compatibility)
         refresh_token = request.COOKIES.get(JWT_REFRESH_COOKIE_NAME) or request.data.get('refresh')
+        
+        # Debug logging
+        if settings.DEBUG:
+            print(f"[TOKEN_REFRESH] Cookies received: {list(request.COOKIES.keys())}")
+            print(f"[TOKEN_REFRESH] Refresh token present: {bool(refresh_token)}")
         
         if not refresh_token:
             return Response(

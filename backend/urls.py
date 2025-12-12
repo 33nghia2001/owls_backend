@@ -13,9 +13,13 @@ from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
+from apps.config_api import get_public_config
 
 # API v1 URL patterns
 api_v1_patterns = [
+    # Public configuration
+    path('config/', get_public_config, name='public-config'),
+    
     # Authentication & Users
     path('', include('apps.users.urls')),
     
