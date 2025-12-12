@@ -104,14 +104,30 @@ class VendorOrderItemSerializer(serializers.ModelSerializer):
     order_number = serializers.CharField(source='order.order_number', read_only=True)
     customer_name = serializers.CharField(source='order.shipping_name', read_only=True)
     shipping_address = serializers.SerializerMethodField()
+    product_image = serializers.SerializerMethodField()
     
     class Meta:
         model = OrderItem
         fields = [
             'id', 'order_number', 'customer_name', 'shipping_address',
             'product_name', 'variant_name', 'quantity', 'unit_price', 
-            'total_price', 'status', 'commission_amount', 'created_at'
+            'total_price', 'status', 'commission_amount', 'created_at',
+            'product_image',
         ]
+    
+    def get_product_image(self, obj):
+        """Get primary product image or first available."""
+        if not obj.product:
+            return None
+        image = obj.product.images.filter(is_primary=True).first()
+        if not image:
+            image = obj.product.images.first()
+        if image and image.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(image.image.url)
+            return image.image.url
+        return None
     
     def get_shipping_address(self, obj):
         """Format full shipping address from new fields."""
