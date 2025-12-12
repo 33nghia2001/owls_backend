@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.shortcuts import get_object_or_404
+from django.db.models import F
 
 from .models import Cart, CartItem
 from .serializers import (
@@ -83,8 +84,10 @@ class CartViewSet(viewsets.ViewSet):
                 variant=item.variant
             ).first()
             if existing:
-                existing.quantity += item.quantity
-                existing.save()
+                # Use F() expression to avoid race condition
+                existing.quantity = F('quantity') + item.quantity
+                existing.save(update_fields=['quantity'])
+                existing.refresh_from_db()
             else:
                 item.cart = target_cart
                 item.save()
@@ -114,8 +117,10 @@ class CartViewSet(viewsets.ViewSet):
         existing_item = cart.items.filter(product=product, variant=variant).first()
         
         if existing_item:
-            existing_item.quantity += serializer.validated_data['quantity']
-            existing_item.save()
+            # Use F() expression to avoid race condition when spam clicking
+            existing_item.quantity = F('quantity') + serializer.validated_data['quantity']
+            existing_item.save(update_fields=['quantity'])
+            existing_item.refresh_from_db()  # Refresh to get actual value after F() expression
             item = existing_item
         else:
             # Get price
