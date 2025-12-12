@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.exceptions import ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import transaction
@@ -201,8 +202,18 @@ class OrderViewSet(viewsets.ModelViewSet):
                         shipping_cost = 0
                     else:
                         discount_amount = coupon.calculate_discount(subtotal)
+                else:
+                    # Coupon exists but is not valid (expired, usage limit, etc.)
+                    return Response(
+                        {'error': 'Mã giảm giá đã hết hạn hoặc không còn hiệu lực.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             except Coupon.DoesNotExist:
-                pass
+                # Coupon code not found - inform user instead of silently ignoring
+                return Response(
+                    {'error': 'Mã giảm giá không tồn tại.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         total = subtotal + shipping_cost - discount_amount
         
@@ -257,7 +268,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 reserved_quantity=F('reserved_quantity') + cart_item.quantity
             )
             
-            # Log inventory movement
+            # Log inventory movement (created_by can be None for guest orders)
             InventoryMovement.objects.create(
                 inventory=inventory,
                 movement_type='reserved',
@@ -265,15 +276,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                 reference_type='order',
                 reference_id=str(order.id),
                 note=f'Reserved for order {order.order_number}',
-                created_by=request.user
+                created_by=user  # Use user variable (can be None for guests)
             )
         
-        # Create status history
+        # Create status history (created_by can be None for guest orders)
         OrderStatusHistory.objects.create(
             order=order,
             status='pending',
             note='Order created',
-            created_by=request.user
+            created_by=user  # Use user variable (can be None for guests)
         )
         
         # Clear cart
@@ -289,15 +300,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                 ).update(used_count=F('used_count') + 1)
                 
                 if updated == 0:
-                    # Rollback by raising exception inside transaction
-                    raise ValueError('Coupon usage limit exceeded.')
+                    # Coupon usage limit exceeded - raise ValidationError to trigger transaction rollback
+                    raise ValidationError({'coupon_code': 'Mã giảm giá đã hết lượt sử dụng.'})
             else:
                 Coupon.objects.filter(id=coupon.id).update(used_count=F('used_count') + 1)
             
-            # Create CouponUsage record for tracking
+            # Create CouponUsage record for tracking (user can be None for guests)
             CouponUsage.objects.create(
                 coupon=coupon,
-                user=request.user,
+                user=user,  # Can be None for guest checkout
                 order=order,
                 discount_applied=order.discount_amount
             )
