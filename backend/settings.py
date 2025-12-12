@@ -265,7 +265,20 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'analytics.cleanup_old_product_views',
         'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Run at 3 AM every Sunday
     },
+    # Clean up django-celery-results task results (keeps DB tidy)
+    'celery-backend-cleanup': {
+        'task': 'celery.backend_cleanup',
+        'schedule': crontab(hour=4, minute=0),  # Run daily at 04:00
+    },
+    # Clean old search queries to prevent unbounded growth
+    'cleanup-old-search-queries': {
+        'task': 'analytics.cleanup_old_search_queries',
+        'schedule': crontab(hour=4, minute=30),  # Run daily at 04:30
+    },
 }
+
+# Expire celery task results after N seconds (default 7 days)
+CELERY_RESULT_EXPIRES = env.int('CELERY_RESULT_EXPIRES', default=7 * 24 * 3600)
 
 CACHES = {
     'default': {

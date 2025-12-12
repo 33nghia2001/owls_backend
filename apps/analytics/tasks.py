@@ -10,7 +10,7 @@ from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
 
-from .models import ProductView, VendorStats, PlatformStats
+from .models import ProductView, VendorStats, PlatformStats, SearchQuery
 
 
 @shared_task(name='analytics.populate_vendor_stats')
@@ -292,4 +292,23 @@ def backfill_stats(days=30):
     return {
         'days_processed': days,
         'results': results
+    }
+
+
+@shared_task(name='analytics.cleanup_old_search_queries')
+def cleanup_old_search_queries(days=365):
+    """
+    Delete old search query records to prevent database bloat.
+
+    Args:
+        days: Delete records older than this many days (default 365)
+    """
+    cutoff_date = timezone.now() - timedelta(days=days)
+    deleted_count, _ = SearchQuery.objects.filter(
+        searched_at__lt=cutoff_date
+    ).delete()
+
+    return {
+        'deleted_count': deleted_count,
+        'cutoff_date': str(cutoff_date.date()),
     }
