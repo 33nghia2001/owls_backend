@@ -1,19 +1,21 @@
+import logging
+import stripe
+from decimal import Decimal
+
+from django.conf import settings
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.core.mail import send_mail
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.shortcuts import get_object_or_404, redirect
-from django.utils import timezone
-from django.conf import settings
-from django.db import transaction
-from decimal import Decimal
-import stripe
-import logging
 
+from apps.orders.models import Order
 from .models import Payment, PaymentLog
 from .serializers import PaymentSerializer, CreatePaymentSerializer
-from .vnpay import VNPayService
-from apps.orders.models import Order
+from .vnpay import VNPayService  # Import class đã sửa ở bước trước
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +24,15 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
-    """ViewSet for payments."""
+    """ViewSet for payments handling: COD, Stripe, VNPay."""
     serializer_class = PaymentSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        # Optimized query with select_related
         return Payment.objects.filter(
             user=self.request.user
         ).select_related(
-            'order',
-            'user'
+            'order', 'user'
         ).prefetch_related(
             'logs'
         ).order_by('-created_at')
@@ -45,7 +45,21 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         else:
             ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
         return ip
-    
+
+    def _send_alert_email(self, subject, message):
+        """Gửi email cảnh báo khẩn cấp cho Admin."""
+        try:
+            admin_email = getattr(settings, 'ADMIN_EMAIL', settings.DEFAULT_FROM_EMAIL)
+            send_mail(
+                subject=f"[URGENT - PAYMENT ALERT] {subject}",
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[admin_email],
+                fail_silently=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to send alert email: {e}")
+
     @action(detail=False, methods=['post'])
     def create_payment(self, request):
         """Create a payment for an order."""
@@ -73,6 +87,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 'user': request.user,
                 'method': method,
                 'amount': order.total,
+                'status': 'pending'
             }
         )
         
@@ -80,9 +95,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             payment.method = method
             payment.save()
         
-        # Process based on method
+        # --- PROCESS METHODS ---
+        
+        # 1. COD (Cash On Delivery)
         if method == 'cod':
-            # Cash on delivery - mark as pending
             payment.status = 'pending'
             payment.save()
             
@@ -96,23 +112,20 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 'message': 'Order confirmed. Pay on delivery.'
             })
         
+        # 2. STRIPE
         elif method == 'stripe':
-            # Create Stripe checkout session
             try:
                 checkout_session = stripe.checkout.Session.create(
                     payment_method_types=['card'],
                     line_items=[{
                         'price_data': {
                             'currency': 'vnd',
-                            'product_data': {
-                                'name': f'Order {order.order_number}',
-                            },
+                            'product_data': {'name': f'Order {order.order_number}'},
                             'unit_amount': int(order.total.amount),
                         },
                         'quantity': 1,
                     }],
                     mode='payment',
-                    # SECURITY: Always use FRONTEND_URL to prevent Open Redirect
                     success_url=f'{settings.FRONTEND_URL}/checkout/success?order_id={order.id}',
                     cancel_url=f'{settings.FRONTEND_URL}/checkout/cancel',
                     metadata={
@@ -125,41 +138,20 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 payment.status = 'processing'
                 payment.save()
                 
-                # Log the request
-                PaymentLog.objects.create(
-                    payment=payment,
-                    action='create_checkout_session',
-                    request_data={'order_id': str(order.id)},
-                    response_data={'session_id': checkout_session.id},
-                    is_success=True
-                )
-                
                 return Response({
                     'payment': PaymentSerializer(payment).data,
                     'checkout_url': checkout_session.url
                 })
                 
             except stripe.error.StripeError as e:
-                PaymentLog.objects.create(
-                    payment=payment,
-                    action='create_checkout_session',
-                    request_data={'order_id': str(order.id)},
-                    response_data={},
-                    is_success=False,
-                    error_message=str(e)
-                )
-                return Response(
-                    {'error': str(e)},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
+        # 3. VNPAY
         elif method == 'vnpay':
-            # Create VNPay payment URL
-            vnpay_service = VNPayService()
-            # SECURITY: Use server-configured return URL to prevent Open Redirect
-            client_ip = self._get_client_ip(request)
-            
             try:
+                vnpay_service = VNPayService()
+                client_ip = self._get_client_ip(request)
+                
                 payment_url = vnpay_service.create_payment_url(order, None, client_ip)
                 
                 payment.status = 'processing'
@@ -179,81 +171,135 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 })
                 
             except Exception as e:
-                PaymentLog.objects.create(
-                    payment=payment,
-                    action='create_vnpay_url',
-                    request_data={'order_id': str(order.id)},
-                    response_data={},
-                    is_success=False,
-                    error_message=str(e)
-                )
-                return Response(
-                    {'error': str(e)},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
-        return Response(
-            {'error': 'Invalid payment method.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
+        return Response({'error': 'Invalid payment method.'}, status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     @transaction.atomic
     def vnpay_return(self, request):
-        """Handle VNPay return callback."""
+        """
+        Handle VNPay return callback (Client Redirect).
+        Verify signature -> Update Order/Payment -> Redirect UI.
+        """
         params = dict(request.GET)
         # Flatten list values
         params = {k: v[0] if isinstance(v, list) else v for k, v in params.items()}
         
         vnpay_service = VNPayService()
         
-        # Verify signature
         if not vnpay_service.verify_callback(params.copy()):
-            return Response(
-                {'error': 'Invalid signature'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Invalid signature'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get order and payment
         order_id = params.get('vnp_TxnRef')
         try:
             order = Order.objects.get(id=order_id)
             payment = order.payment
         except (Order.DoesNotExist, Payment.DoesNotExist):
-            return Response(
-                {'error': 'Order not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         
-        # Idempotency check - prevent duplicate processing
-        if payment.status == 'completed':
-            return Response({
-                'success': True,
-                'message': 'Payment already processed',
-                'order_id': str(order.id)
-            })
-        
-        # Validate amount matches order total (VNPay sends amount * 100)
-        vnp_amount = Decimal(params.get('vnp_Amount', 0)) / 100
-        if vnp_amount != order.total.amount:
-            return Response(
-                {'error': 'Amount mismatch'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Log callback
         response_code = params.get('vnp_ResponseCode')
         is_success = vnpay_service.is_success(response_code)
         
-        PaymentLog.objects.create(
-            payment=payment,
-            action='vnpay_callback',
-            request_data=params,
-            response_data={'response_code': response_code},
-            is_success=is_success
-        )
+        if is_success:
+            if payment.status != 'completed':
+                payment.status = 'completed'
+                payment.transaction_id = params.get('vnp_TransactionNo', '')
+                payment.gateway_response = params
+                payment.completed_at = timezone.now()
+                payment.save()
+                
+                order.payment_status = 'paid'
+                order.status = 'confirmed'
+                order.confirmed_at = timezone.now()
+                order.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Payment successful',
+                'order_id': str(order.id)
+            })
+        else:
+            payment.status = 'failed'
+            payment.gateway_response = params
+            payment.save()
+            return Response({
+                'success': False,
+                'message': 'Payment failed',
+                'error_code': response_code
+            })
+
+    @action(detail=False, methods=['get', 'post'], permission_classes=[AllowAny])
+    @transaction.atomic
+    def vnpay_ipn(self, request):
+        """
+        Handle VNPay IPN (Server-to-Server).
+        Critical for ensuring payment confirmation even if user closes browser.
+        """
+        if request.method == 'POST':
+            params = dict(request.POST)
+        else:
+            params = dict(request.GET)
+        
+        params = {k: v[0] if isinstance(v, list) else v for k, v in params.items()}
+        
+        vnpay_service = VNPayService()
+        
+        # 1. Verify Signature
+        if not vnpay_service.verify_callback(params.copy()):
+            return Response({'RspCode': '97', 'Message': 'Invalid Signature'})
+        
+        order_id = params.get('vnp_TxnRef')
+        
+        # 2. Check Order/Payment Existence
+        try:
+            order = Order.objects.select_for_update().get(id=order_id)
+            payment = order.payment
+        except (Order.DoesNotExist, Payment.DoesNotExist):
+            return Response({'RspCode': '01', 'Message': 'Order not found'})
+
+        # 3. Idempotency Check
+        if payment.status == 'completed':
+            return Response({'RspCode': '02', 'Message': 'Order already confirmed'})
+            
+        # 4. Amount Validation
+        vnp_amount = Decimal(params.get('vnp_Amount', 0)) / 100
+        if vnp_amount != order.total.amount:
+            return Response({'RspCode': '04', 'Message': 'Invalid Amount'})
+        
+        response_code = params.get('vnp_ResponseCode')
+        is_success = vnpay_service.is_success(response_code)
         
         if is_success:
+            # --- CRITICAL RACE CONDITION CHECK ---
+            # Nếu đơn hàng đã bị hủy (bởi người dùng hoặc cronjob) nhưng tiền vẫn về
+            if order.status == 'cancelled':
+                payment.status = 'pending_refund'
+                payment.transaction_id = params.get('vnp_TransactionNo', '')
+                payment.gateway_response = params
+                payment.completed_at = timezone.now()
+                payment.save()
+                
+                # Gửi email báo động cho Admin
+                self._send_alert_email(
+                    subject=f"CRITICAL: Tiền về cho đơn hủy #{order.order_number}",
+                    message=f"Đơn hàng {order.id} đã bị hủy nhưng nhận được thanh toán VNPay.\n"
+                            f"Mã GD: {params.get('vnp_TransactionNo')}\n"
+                            f"Số tiền: {vnp_amount}\n"
+                            f"Yêu cầu: Kiểm tra và hoàn tiền thủ công."
+                )
+                
+                PaymentLog.objects.create(
+                    payment=payment,
+                    action='vnpay_ipn_cancelled',
+                    request_data=params,
+                    response_data={'response_code': response_code},
+                    is_success=False,
+                    error_message='Payment received for cancelled order'
+                )
+                return Response({'RspCode': '00', 'Message': 'Confirm Success (Refund Needed)'})
+
+            # --- NORMAL SUCCESS CASE ---
             payment.status = 'completed'
             payment.transaction_id = params.get('vnp_TransactionNo', '')
             payment.gateway_response = params
@@ -265,22 +311,22 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             order.confirmed_at = timezone.now()
             order.save()
             
-            return Response({
-                'success': True,
-                'message': 'Payment successful',
-                'order_id': str(order.id)
-            })
+            PaymentLog.objects.create(
+                payment=payment,
+                action='vnpay_ipn',
+                request_data=params,
+                response_data={'response_code': response_code},
+                is_success=True
+            )
+            return Response({'RspCode': '00', 'Message': 'Confirm Success'})
+            
         else:
+            # Payment Failed
             payment.status = 'failed'
             payment.gateway_response = params
             payment.save()
-            
-            return Response({
-                'success': False,
-                'message': 'Payment failed',
-                'error_code': response_code
-            })
-    
+            return Response({'RspCode': '00', 'Message': 'Confirm Success'})
+
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     @transaction.atomic
     def stripe_webhook(self, request):
@@ -304,38 +350,21 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 payment = Payment.objects.select_for_update().get(id=payment_id)
                 order = payment.order
                 
-                # Idempotency check - prevent duplicate processing
                 if payment.status == 'completed':
                     return Response({'status': 'already_processed'})
                 
-                # CRITICAL: Check if order was cancelled (race condition with cancel task)
-                # If order cancelled but payment received -> flag for refund
+                # Check race condition for Stripe as well
                 if order.status == 'cancelled':
                     payment.status = 'pending_refund'
                     payment.transaction_id = session.get('payment_intent', '')
                     payment.gateway_response = dict(session)
-                    payment.completed_at = timezone.now()
                     payment.save()
                     
-                    PaymentLog.objects.create(
-                        payment=payment,
-                        action='stripe_webhook_cancelled_order',
-                        request_data={'event_type': event['type']},
-                        response_data={'session_id': session['id']},
-                        is_success=False,
-                        error_message='Payment received for cancelled order - requires refund'
+                    self._send_alert_email(
+                        subject=f"CRITICAL: Stripe payment for cancelled order #{order.order_number}",
+                        message=f"Order {order.id} was cancelled but payment received."
                     )
-                    
-                    # TODO: Trigger automatic refund or notify admin
-                    logger.warning(
-                        f"Payment received for cancelled order {order.order_number}. "
-                        f"Payment ID: {payment.id}. Requires manual refund."
-                    )
-                    
-                    return Response({
-                        'status': 'cancelled_order_refund_needed',
-                        'order_id': str(order.id)
-                    })
+                    return Response({'status': 'refund_needed'})
                 
                 payment.status = 'completed'
                 payment.transaction_id = session.get('payment_intent', '')
@@ -348,178 +377,28 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 order.confirmed_at = timezone.now()
                 order.save()
                 
-                PaymentLog.objects.create(
-                    payment=payment,
-                    action='stripe_webhook',
-                    request_data={'event_type': event['type']},
-                    response_data={'session_id': session['id']},
-                    is_success=True
-                )
-                
             except Payment.DoesNotExist:
                 pass
         
         return Response({'status': 'success'})
-    
-    @action(detail=False, methods=['get', 'post'], permission_classes=[AllowAny])
-    @transaction.atomic
-    def vnpay_ipn(self, request):
-        """
-        Handle VNPay IPN (Instant Payment Notification) - Server-to-Server callback.
-        
-        CRITICAL: This endpoint is called directly by VNPay servers, not by user's browser.
-        This ensures payment confirmation even if user closes browser after payment.
-        
-        VNPay expects specific response format:
-        - RspCode=00, Message=Confirm Success - for successful confirmation
-        - RspCode=XX - for errors (01=Order not found, 02=Already confirmed, etc.)
-        """
-        # Support both GET and POST from VNPay
-        if request.method == 'POST':
-            params = dict(request.POST)
-        else:
-            params = dict(request.GET)
-        
-        # Flatten list values
-        params = {k: v[0] if isinstance(v, list) else v for k, v in params.items()}
-        
-        vnpay_service = VNPayService()
-        
-        # Verify signature first
-        if not vnpay_service.verify_callback(params.copy()):
-            return Response({
-                'RspCode': '97',
-                'Message': 'Invalid Signature'
-            })
-        
-        # Get order and payment
-        order_id = params.get('vnp_TxnRef')
-        try:
-            order = Order.objects.select_for_update().get(id=order_id)
-            payment = order.payment
-        except Order.DoesNotExist:
-            return Response({
-                'RspCode': '01',
-                'Message': 'Order not found'
-            })
-        except Payment.DoesNotExist:
-            return Response({
-                'RspCode': '01',
-                'Message': 'Payment not found'
-            })
-        
-        # Idempotency check - already confirmed
-        if payment.status == 'completed':
-            return Response({
-                'RspCode': '02',
-                'Message': 'Order already confirmed'
-            })
-        
-        # Validate amount matches order total (VNPay sends amount * 100)
-        vnp_amount = Decimal(params.get('vnp_Amount', 0)) / 100
-        if vnp_amount != order.total.amount:
-            return Response({
-                'RspCode': '04',
-                'Message': 'Invalid Amount'
-            })
-        
-        # Log callback
-        response_code = params.get('vnp_ResponseCode')
-        is_success = vnpay_service.is_success(response_code)
-        
-        PaymentLog.objects.create(
-            payment=payment,
-            action='vnpay_ipn',
-            request_data=params,
-            response_data={'response_code': response_code},
-            is_success=is_success
-        )
-        
-        if is_success:
-            # CRITICAL: Check if order was cancelled (race condition with cancel task)
-            # If order cancelled but payment received -> flag for refund
-            if order.status == 'cancelled':
-                payment.status = 'pending_refund'
-                payment.transaction_id = params.get('vnp_TransactionNo', '')
-                payment.gateway_response = params
-                payment.completed_at = timezone.now()
-                payment.save()
-                
-                PaymentLog.objects.create(
-                    payment=payment,
-                    action='vnpay_ipn_cancelled_order',
-                    request_data=params,
-                    response_data={'response_code': response_code},
-                    is_success=False,
-                    error_message='Payment received for cancelled order - requires refund'
-                )
-                
-                logger.warning(
-                    f"VNPay payment received for cancelled order {order.order_number}. "
-                    f"Transaction: {params.get('vnp_TransactionNo')}. Requires manual refund."
-                )
-                
-                return Response({
-                    'RspCode': '00',
-                    'Message': 'Confirm Success'  # Acknowledge receipt, but flag for refund
-                })
-            
-            payment.status = 'completed'
-            payment.transaction_id = params.get('vnp_TransactionNo', '')
-            payment.gateway_response = params
-            payment.completed_at = timezone.now()
-            payment.save()
-            
-            order.payment_status = 'paid'
-            order.status = 'confirmed'
-            order.confirmed_at = timezone.now()
-            order.save()
-            
-            return Response({
-                'RspCode': '00',
-                'Message': 'Confirm Success'
-            })
-        else:
-            payment.status = 'failed'
-            payment.gateway_response = params
-            payment.save()
-            
-            return Response({
-                'RspCode': '00',
-                'Message': 'Confirm Success'  # VNPay expects 00 even for failed payments
-            })
-    
+
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     @transaction.atomic
     def refund(self, request, pk=None):
         """
-        Process a refund for a payment.
-        
-        Only works for:
-        - Stripe payments with valid payment_intent/charge ID
-        - Payments in 'completed' or 'pending_refund' status
-        
-        Requires admin or staff permission.
+        Process a refund for a payment (Admin/Staff only).
         """
-        from apps.vendors.permissions import IsAdminOrStaff
-        
-        # Check permission
         if not request.user.is_staff:
-            return Response(
-                {'error': 'Only staff can process refunds.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({'error': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
         
         payment = get_object_or_404(Payment, pk=pk)
         
-        # Validate payment status
         if payment.status not in ['completed', 'pending_refund']:
             return Response(
                 {'error': f'Cannot refund payment with status: {payment.status}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get refund amount (optional partial refund)
         refund_amount = request.data.get('amount')
         reason = request.data.get('reason', 'requested_by_customer')
         
@@ -528,161 +407,100 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         elif payment.method == 'vnpay':
             return self._process_vnpay_refund(payment, refund_amount, reason)
         elif payment.method == 'cod':
-            # COD refunds are manual - just update status
             payment.status = 'refunded'
             payment.save()
+            return Response({'success': True, 'message': 'COD marked as refunded.'})
             
-            PaymentLog.objects.create(
-                payment=payment,
-                action='cod_refund',
-                request_data={'reason': reason},
-                response_data={'status': 'manual_refund'},
-                is_success=True
-            )
-            
-            return Response({
-                'success': True,
-                'message': 'COD payment marked as refunded (manual process).'
-            })
-        
-        return Response(
-            {'error': 'Unsupported payment method for refund.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
+        return Response({'error': 'Unsupported method.'}, status=status.HTTP_400_BAD_REQUEST)
+
     def _process_stripe_refund(self, payment, refund_amount=None, reason='requested_by_customer'):
-        """Process a Stripe refund."""
+        """Helper to process Stripe refund."""
         if not payment.transaction_id:
-            return Response(
-                {'error': 'No Stripe payment_intent found for this payment.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'No transaction ID.'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Build refund parameters
-            refund_params = {
+            params = {
                 'payment_intent': payment.transaction_id,
-                'reason': reason,  # 'duplicate', 'fraudulent', 'requested_by_customer'
+                'reason': reason,
             }
-            
             if refund_amount:
-                # Partial refund - amount in smallest currency unit
-                refund_params['amount'] = int(Decimal(refund_amount))
+                params['amount'] = int(Decimal(refund_amount))
+
+            refund = stripe.Refund.create(**params)
             
-            # Create the refund via Stripe API
-            refund = stripe.Refund.create(**refund_params)
-            
-            # Update payment status
-            if refund.status == 'succeeded':
-                payment.status = 'refunded'
-            else:
-                payment.status = 'refund_pending'
-            
-            payment.gateway_response = {
-                **payment.gateway_response,
-                'refund_id': refund.id,
-                'refund_status': refund.status,
-                'refund_amount': refund.amount,
-            }
+            payment.status = 'refunded' if refund.status == 'succeeded' else 'refund_pending'
             payment.save()
             
             PaymentLog.objects.create(
                 payment=payment,
                 action='stripe_refund',
-                request_data={
-                    'payment_intent': payment.transaction_id,
-                    'amount': refund_amount,
-                    'reason': reason,
-                },
-                response_data={
-                    'refund_id': refund.id,
-                    'status': refund.status,
-                    'amount': refund.amount,
-                },
+                request_data=params,
+                response_data={'refund_id': refund.id, 'status': refund.status},
                 is_success=True
             )
             
-            logger.info(
-                f"Stripe refund processed for payment {payment.id}. "
-                f"Refund ID: {refund.id}, Status: {refund.status}"
-            )
-            
-            return Response({
-                'success': True,
-                'refund_id': refund.id,
-                'refund_status': refund.status,
-                'refund_amount': refund.amount / 100,  # Convert from cents
-                'message': 'Refund processed successfully.'
-            })
+            return Response({'success': True, 'refund_id': refund.id})
             
         except stripe.error.StripeError as e:
-            PaymentLog.objects.create(
-                payment=payment,
-                action='stripe_refund',
-                request_data={
-                    'payment_intent': payment.transaction_id,
-                    'amount': refund_amount,
-                },
-                response_data={},
-                is_success=False,
-                error_message=str(e)
-            )
-            
-            logger.error(f"Stripe refund failed for payment {payment.id}: {e}")
-            
-            return Response(
-                {'error': f'Stripe refund failed: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-    
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
     def _process_vnpay_refund(self, payment, refund_amount=None, reason='requested_by_customer'):
         """
-        Process a VNPay refund.
-        
-        NOTE: VNPay requires a separate refund API integration.
-        This is a placeholder that marks for manual refund processing.
-        
-        For full implementation, integrate with VNPay's refund API:
-        https://sandbox.vnpayment.vn/apis/docs/huong-dan-tich-hop/
+        Helper to process VNPay refund using VNPayService.
         """
-        # For now, mark as pending manual refund
-        # Full VNPay refund API requires:
-        # - vnp_RequestId: Unique request ID
-        # - vnp_Command: refund
-        # - vnp_TxnRef: Original transaction reference
-        # - vnp_Amount: Refund amount * 100
-        # - vnp_TransactionNo: Original transaction number
-        # - etc.
+        vnpay_service = VNPayService()
+        client_ip = self._get_client_ip(self.request)
+        user_name = self.request.user.email
         
-        payment.status = 'refund_pending'
-        payment.gateway_response = {
-            **payment.gateway_response,
-            'refund_reason': reason,
-            'refund_requested_at': timezone.now().isoformat(),
-            'refund_status': 'manual_processing_required',
-        }
-        payment.save()
+        # Determine amount (full or partial)
+        amount = Decimal(str(refund_amount)) if refund_amount else payment.amount.amount
         
-        PaymentLog.objects.create(
-            payment=payment,
-            action='vnpay_refund_requested',
-            request_data={
-                'transaction_id': payment.transaction_id,
-                'amount': refund_amount or str(payment.amount.amount),
-                'reason': reason,
-            },
-            response_data={'status': 'manual_processing_required'},
-            is_success=True,
-            error_message='VNPay refund requires manual processing or full API integration.'
-        )
-        
-        logger.warning(
-            f"VNPay refund requested for payment {payment.id}. "
-            f"Transaction: {payment.transaction_id}. Manual processing required."
-        )
-        
-        return Response({
-            'success': True,
-            'message': 'VNPay refund has been flagged for manual processing.',
-            'note': 'VNPay refunds require bank processing (1-3 business days).'
-        })
+        try:
+            # Gọi API hoàn tiền
+            response = vnpay_service.refund(payment, amount, reason, client_ip, user_name)
+            
+            if response.get('vnp_ResponseCode') == '00':
+                payment.status = 'refunded'
+                payment.refund_amount = amount
+                payment.refunded_at = timezone.now()
+                
+                # Update response log
+                gw_response = payment.gateway_response or {}
+                gw_response.update({'refund_response': response})
+                payment.gateway_response = gw_response
+                payment.save()
+                
+                PaymentLog.objects.create(
+                    payment=payment,
+                    action='vnpay_refund',
+                    request_data={'amount': str(amount), 'reason': reason},
+                    response_data=response,
+                    is_success=True
+                )
+                
+                return Response({
+                    'success': True,
+                    'message': 'Refund successful',
+                    'data': response
+                })
+            else:
+                # Log failure
+                PaymentLog.objects.create(
+                    payment=payment,
+                    action='vnpay_refund',
+                    request_data={'amount': str(amount)},
+                    response_data=response,
+                    is_success=False,
+                    error_message=response.get('vnp_Message', 'Unknown error')
+                )
+                return Response(
+                    {'error': f"VNPay Error: {response.get('vnp_Message')}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            logger.error(f"VNPay refund exception: {e}")
+            return Response(
+                {'error': f"Internal Error: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
