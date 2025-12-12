@@ -13,11 +13,10 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 
 # ALLOWED_HOSTS configuration
-# In production, set ALLOWED_HOSTS env var. Koyeb auto-sets KOYEB=true
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
-if not ALLOWED_HOSTS and not DEBUG:
-    # For Koyeb deployment - allow all .koyeb.app domains
-    ALLOWED_HOSTS = ['.koyeb.app', 'localhost', '127.0.0.1']
+# Always allow Koyeb domains for deployment
+if '.koyeb.app' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('.koyeb.app')
 
 # Frontend URL (for redirects after payment, etc.)
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
