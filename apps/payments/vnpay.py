@@ -4,9 +4,30 @@ import urllib.parse
 import uuid
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional, Dict, Any
 
 import requests
 from django.conf import settings
+
+
+# VNPay Refund API requires fields in this exact order for checksum calculation
+# Reference: VNPay API Documentation v2.1.0
+VNPAY_REFUND_HASH_FIELDS = [
+    'vnp_RequestId',
+    'vnp_Version', 
+    'vnp_Command',
+    'vnp_TmnCode',
+    'vnp_TransactionType',
+    'vnp_TxnRef',
+    'vnp_Amount',
+    'vnp_TransactionNo',
+    'vnp_TransactionDate',
+    'vnp_CreateBy',
+    'vnp_CreateDate',
+    'vnp_IpAddr',
+    'vnp_OrderInfo',
+]
+
 
 class VNPayService:
     """Service for VNPay payment integration."""
@@ -88,14 +109,24 @@ class VNPayService:
     def refund(self, payment, amount, reason, user_ip, user_name='AdminSystem'):
         """
         Gửi yêu cầu hoàn tiền sang VNPay API.
+        
+        Args:
+            payment: Payment object with transaction details
+            amount: Amount to refund (in VND, not multiplied by 100)
+            reason: Refund reason description
+            user_ip: IP address of the user requesting refund
+            user_name: Name of the user/admin requesting refund
+            
+        Returns:
+            dict: VNPay API response
         """
         request_id = datetime.now().strftime('%Y%m%d%H%M%S') + str(uuid.uuid4())[:4]
         vnp_create_date = datetime.now().strftime('%Y%m%d%H%M%S')
         
         # 02: Hoàn tiền một phần, 03: Hoàn toàn bộ
-        # Lưu ý: payment.amount.amount cần là Decimal hoặc int gốc chưa nhân 100
         tr_type = '02' if amount < payment.amount.amount else '03'
         
+        # Build params dict - all values must be strings for hash consistency
         vnp_params = {
             'vnp_RequestId': request_id,
             'vnp_Version': '2.1.0',
@@ -103,39 +134,18 @@ class VNPayService:
             'vnp_TmnCode': self.tmn_code,
             'vnp_TransactionType': tr_type,
             'vnp_TxnRef': str(payment.order.id)[:20],
-            'vnp_Amount': int(amount * 100),
-            'vnp_OrderInfo': f"Refund: {reason}",
-            'vnp_TransactionNo': payment.transaction_id,
+            'vnp_Amount': str(int(amount * 100)),  # VNPay expects amount * 100
+            'vnp_TransactionNo': str(payment.transaction_id or ''),
             'vnp_TransactionDate': payment.created_at.strftime('%Y%m%d%H%M%S'),
             'vnp_CreateBy': user_name,
             'vnp_CreateDate': vnp_create_date,
-            'vnp_IpAddr': user_ip
+            'vnp_IpAddr': user_ip,
+            'vnp_OrderInfo': f"Refund: {reason}"[:255],  # Max 255 chars per VNPay spec
         }
 
-        # Tạo checksum cho API Refund (khác với Payment URL, dùng dấu | để nối)
-        # Thứ tự các trường này QUAN TRỌNG, phải đúng theo tài liệu VNPay
-        hash_data = "|".join([
-            str(vnp_params['vnp_RequestId']),
-            str(vnp_params['vnp_Version']),
-            str(vnp_params['vnp_Command']),
-            str(vnp_params['vnp_TmnCode']),
-            str(vnp_params['vnp_TransactionType']),
-            str(vnp_params['vnp_TxnRef']),
-            str(vnp_params['vnp_Amount']),
-            str(vnp_params['vnp_TransactionNo']),
-            str(vnp_params['vnp_TransactionDate']),
-            str(vnp_params['vnp_CreateBy']),
-            str(vnp_params['vnp_CreateDate']),
-            str(vnp_params['vnp_IpAddr']),
-            str(vnp_params['vnp_OrderInfo'])
-        ])
-        
-        secure_hash = hmac.new(
-            self.hash_secret.encode('utf-8'),
-            hash_data.encode('utf-8'),
-            hashlib.sha512
-        ).hexdigest()
-        
+        # Build checksum using the defined field order
+        # This ensures consistency even if VNPay adds new fields
+        secure_hash = self._build_refund_checksum(vnp_params)
         vnp_params['vnp_SecureHash'] = secure_hash
 
         try:
@@ -143,3 +153,35 @@ class VNPayService:
             return response.json()
         except requests.RequestException as e:
             return {'vnp_ResponseCode': '99', 'vnp_Message': str(e)}
+    
+    def _build_refund_checksum(self, params: Dict[str, Any]) -> str:
+        """
+        Build HMAC-SHA512 checksum for refund API.
+        
+        VNPay refund API requires fields joined by '|' in a specific order.
+        This method uses VNPAY_REFUND_HASH_FIELDS constant to ensure
+        correct field ordering and makes it easy to update if VNPay changes specs.
+        
+        Args:
+            params: Dictionary of VNPay parameters
+            
+        Returns:
+            str: HMAC-SHA512 hash in lowercase hex
+        """
+        # Build hash data from fields in the correct order
+        hash_values = []
+        for field in VNPAY_REFUND_HASH_FIELDS:
+            value = params.get(field)
+            # Convert to string, handle None explicitly
+            if value is None:
+                hash_values.append('')
+            else:
+                hash_values.append(str(value))
+        
+        hash_data = '|'.join(hash_values)
+        
+        return hmac.new(
+            self.hash_secret.encode('utf-8'),
+            hash_data.encode('utf-8'),
+            hashlib.sha512
+        ).hexdigest()

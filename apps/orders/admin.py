@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Order, OrderItem, OrderStatusHistory
+from .models import Order, OrderItem, OrderStatusHistory, SubOrder, SubOrderStatusHistory
 
 
 class OrderItemInline(admin.TabularInline):
@@ -14,6 +14,19 @@ class OrderStatusHistoryInline(admin.TabularInline):
     readonly_fields = ('created_at',)
 
 
+class SubOrderInline(admin.TabularInline):
+    model = SubOrder
+    extra = 0
+    readonly_fields = ('sub_order_number', 'subtotal', 'total', 'commission_amount', 'created_at')
+    fields = ('sub_order_number', 'vendor', 'status', 'subtotal', 'shipping_cost', 'total', 'tracking_number')
+
+
+class SubOrderStatusHistoryInline(admin.TabularInline):
+    model = SubOrderStatusHistory
+    extra = 0
+    readonly_fields = ('created_at',)
+
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = (
@@ -23,7 +36,7 @@ class OrderAdmin(admin.ModelAdmin):
     list_filter = ('status', 'payment_status', 'created_at')
     search_fields = ('order_number', 'user__email', 'shipping_name')
     readonly_fields = ('order_number', 'created_at', 'updated_at')
-    inlines = [OrderItemInline, OrderStatusHistoryInline]
+    inlines = [OrderItemInline, SubOrderInline, OrderStatusHistoryInline]
     
     fieldsets = (
         (None, {'fields': ('order_number', 'user', 'status', 'payment_status')}),
@@ -51,3 +64,25 @@ class OrderItemAdmin(admin.ModelAdmin):
     )
     list_filter = ('status', 'vendor')
     search_fields = ('order__order_number', 'product_name')
+
+
+@admin.register(SubOrder)
+class SubOrderAdmin(admin.ModelAdmin):
+    list_display = (
+        'sub_order_number', 'order', 'vendor', 'status',
+        'subtotal', 'shipping_cost', 'total', 'created_at'
+    )
+    list_filter = ('status', 'vendor', 'created_at')
+    search_fields = ('sub_order_number', 'order__order_number', 'vendor__business_name')
+    readonly_fields = ('sub_order_number', 'subtotal', 'total', 'commission_amount', 'created_at', 'updated_at')
+    inlines = [SubOrderStatusHistoryInline]
+    
+    fieldsets = (
+        (None, {'fields': ('sub_order_number', 'order', 'vendor', 'status')}),
+        ('Pricing', {'fields': ('subtotal', 'shipping_cost', 'total', 'commission_rate', 'commission_amount')}),
+        ('Shipping', {'fields': ('shipping_method', 'tracking_number', 'carrier_name')}),
+        ('Notes', {'fields': ('vendor_note',)}),
+        ('Timestamps', {'fields': (
+            'created_at', 'updated_at', 'confirmed_at', 'shipped_at', 'delivered_at', 'cancelled_at'
+        ), 'classes': ('collapse',)}),
+    )

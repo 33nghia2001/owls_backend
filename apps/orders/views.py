@@ -356,6 +356,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             created_by=user  # Use user variable (can be None for guests)
         )
         
+        # Create sub-orders for multi-vendor support
+        # This splits the order by vendor for independent tracking/shipping
+        order.create_sub_orders()
+        
         # Clear cart
         cart.clear()
         

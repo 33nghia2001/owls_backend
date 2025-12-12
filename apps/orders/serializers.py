@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Order, OrderItem, OrderStatusHistory
+from .models import Order, OrderItem, OrderStatusHistory, SubOrder, SubOrderStatusHistory
 from apps.products.serializers import ProductListSerializer
 from apps.shipping.constants import normalize_province_name, is_valid_province
 
@@ -24,6 +24,36 @@ class OrderStatusHistorySerializer(serializers.ModelSerializer):
         fields = ['id', 'status', 'note', 'created_by_email', 'created_at']
 
 
+class SubOrderStatusHistorySerializer(serializers.ModelSerializer):
+    """Serializer for sub-order status history."""
+    created_by_email = serializers.CharField(source='created_by.email', read_only=True)
+    
+    class Meta:
+        model = SubOrderStatusHistory
+        fields = ['id', 'status', 'note', 'created_by_email', 'created_at']
+
+
+class SubOrderSerializer(serializers.ModelSerializer):
+    """Serializer for sub-orders (per vendor)."""
+    vendor_name = serializers.CharField(source='vendor.business_name', read_only=True)
+    status_history = SubOrderStatusHistorySerializer(many=True, read_only=True)
+    items_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SubOrder
+        fields = [
+            'id', 'sub_order_number', 'vendor', 'vendor_name', 'status',
+            'subtotal', 'shipping_cost', 'total',
+            'commission_rate', 'commission_amount',
+            'tracking_number', 'carrier_name',
+            'status_history', 'items_count',
+            'created_at', 'confirmed_at', 'shipped_at', 'delivered_at'
+        ]
+    
+    def get_items_count(self, obj):
+        return obj.order.items.filter(vendor=obj.vendor).count()
+
+
 class OrderListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for order listing."""
     items_count = serializers.SerializerMethodField()
@@ -42,6 +72,7 @@ class OrderListSerializer(serializers.ModelSerializer):
 class OrderDetailSerializer(serializers.ModelSerializer):
     """Full serializer for order detail."""
     items = OrderItemSerializer(many=True, read_only=True)
+    sub_orders = SubOrderSerializer(many=True, read_only=True)
     status_history = OrderStatusHistorySerializer(many=True, read_only=True)
     
     class Meta:
@@ -56,7 +87,7 @@ class OrderDetailSerializer(serializers.ModelSerializer):
             'billing_name', 'billing_phone', 'billing_address',
             'billing_province', 'billing_ward', 'billing_country', 'billing_postal_code',
             'coupon', 'customer_note',
-            'items', 'status_history',
+            'items', 'sub_orders', 'status_history',
             'created_at', 'confirmed_at', 'shipped_at', 'delivered_at'
         ]
 

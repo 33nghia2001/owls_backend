@@ -195,17 +195,18 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     # Rate limiting to prevent abuse
+    # Rates tuned for good UX while preventing abuse (comparable to Shopee/Tiki)
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',         # Unauthenticated users: 100 requests/hour
-        'user': '1000/hour',        # Authenticated users: 1000 requests/hour
-        'login': '5/minute',        # Login attempts: 5 per minute
-        'registration': '5/hour',   # Registration: 5 per hour per IP
-        'sensitive': '30/hour',     # Sensitive operations (coupon, checkout): 30/hour
-        'password_reset': '3/hour', # Password reset requests: 3 per hour
+        'anon': '200/hour',         # Unauthenticated users: 200 requests/hour
+        'user': '2000/hour',        # Authenticated users: 2000 requests/hour
+        'login': '5/minute',        # Login attempts: 5 per minute (prevent brute force)
+        'registration': '10/hour',  # Registration: 10 per hour per IP
+        'sensitive': '60/hour',     # Sensitive operations (coupon, checkout): 60/hour
+        'password_reset': '5/hour', # Password reset requests: 5 per hour
     },
 }
 
@@ -291,7 +292,7 @@ FREE_SHIPPING_THRESHOLD = env.int('FREE_SHIPPING_THRESHOLD', default=500000)  # 
 MAX_PENDING_ORDERS_PER_USER = env.int('MAX_PENDING_ORDERS_PER_USER', default=3)
 MAX_PENDING_ORDERS_PER_GUEST = env.int('MAX_PENDING_ORDERS_PER_GUEST', default=2)  # Per email in 24h
 MAX_ORDERS_PER_IP_PER_HOUR = env.int('MAX_ORDERS_PER_IP_PER_HOUR', default=5)  # IP-based limit
-GUEST_ORDER_RATE_LIMIT = env('GUEST_ORDER_RATE_LIMIT', default='3/hour')  # Throttle rate
+GUEST_ORDER_RATE_LIMIT = env('GUEST_ORDER_RATE_LIMIT', default='5/hour')  # Throttle rate
 PENDING_ORDER_TIMEOUT_MINUTES = env.int('PENDING_ORDER_TIMEOUT_MINUTES', default=15)
 
 # Vendor Payout Settings - Hold period before release

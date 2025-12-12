@@ -5,13 +5,21 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import logout
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
 from django.conf import settings
+import logging
 
 from .models import Users, Address
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, UserLoginSerializer,
     ChangePasswordSerializer, AddressSerializer
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Cookie settings for JWT tokens
@@ -159,6 +167,120 @@ class AuthViewSet(viewsets.ViewSet):
             )
             # Clear invalid cookies
             return clear_jwt_cookies(response)
+    
+    @action(detail=False, methods=['post'], throttle_classes=[LoginRateThrottle])
+    def forgot_password(self, request):
+        """
+        Send password reset email.
+        Rate limited to prevent email enumeration/spam.
+        """
+        email = request.data.get('email', '').lower().strip()
+        
+        if not email:
+            return Response(
+                {'error': 'Email là bắt buộc.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Always return success to prevent email enumeration
+        # But only send email if user exists
+        try:
+            user = Users.objects.get(email__iexact=email)
+            
+            # Generate password reset token
+            token = default_token_generator.make_token(user)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            
+            # Build reset URL
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+            reset_url = f"{frontend_url}/auth/reset-password?uid={uid}&token={token}"
+            
+            # Send email (async in production via Celery)
+            try:
+                subject = "Đặt lại mật khẩu - OWLS Marketplace"
+                message = f"""
+Xin chào {user.full_name or user.email},
+
+Bạn đã yêu cầu đặt lại mật khẩu cho tài khoản OWLS Marketplace.
+
+Nhấn vào liên kết sau để đặt lại mật khẩu:
+{reset_url}
+
+Liên kết này sẽ hết hạn sau 24 giờ.
+
+Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.
+
+Trân trọng,
+OWLS Marketplace Team
+                """.strip()
+                
+                send_mail(
+                    subject=subject,
+                    message=message,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=True
+                )
+                logger.info(f"Password reset email sent to {email}")
+            except Exception as e:
+                logger.error(f"Failed to send password reset email to {email}: {e}")
+                
+        except Users.DoesNotExist:
+            # Don't reveal that user doesn't exist
+            logger.info(f"Password reset requested for non-existent email: {email}")
+        
+        return Response({
+            'message': 'Nếu email tồn tại trong hệ thống, bạn sẽ nhận được hướng dẫn đặt lại mật khẩu.'
+        })
+    
+    @action(detail=False, methods=['post'])
+    def reset_password(self, request):
+        """
+        Reset password using token from email.
+        """
+        uid = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+        
+        if not all([uid, token, new_password]):
+            return Response(
+                {'error': 'Thiếu thông tin bắt buộc.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate password length
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'Mật khẩu phải có ít nhất 8 ký tự.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Decode user id
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = Users.objects.get(pk=user_id)
+        except (TypeError, ValueError, OverflowError, Users.DoesNotExist):
+            return Response(
+                {'error': 'Liên kết đặt lại mật khẩu không hợp lệ.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify token
+        if not default_token_generator.check_token(user, token):
+            return Response(
+                {'error': 'Liên kết đặt lại mật khẩu đã hết hạn hoặc không hợp lệ.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+        
+        logger.info(f"Password reset successful for user {user.email}")
+        
+        return Response({
+            'message': 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập với mật khẩu mới.'
+        })
 
 
 class UserViewSet(viewsets.ModelViewSet):
