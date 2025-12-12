@@ -8,6 +8,8 @@ After the merger (Nghị quyết 202/2025/QH15), Vietnam has 34 provinces/cities
 
 Used for address validation in orders and shipping.
 """
+import re
+import unicodedata
 
 # 34 provinces and municipalities of Vietnam (after 01/07/2025 merger)
 # Source: https://bankervn.com/danh-sach-cac-tinh-thanh-viet-nam/
@@ -118,16 +120,58 @@ LEGACY_PROVINCE_MAPPING = {
 
 # Alternative names and common variations for fuzzy matching
 PROVINCE_ALIASES = {
-    "Hồ Chí Minh": ["HCM", "HCMC", "Ho Chi Minh", "Sài Gòn", "Saigon", "TP.HCM", "TP HCM", "Thành phố Hồ Chí Minh", "TPHCM"],
-    "Hà Nội": ["Ha Noi", "Hanoi", "TP.Hà Nội", "Thành phố Hà Nội"],
-    "Đà Nẵng": ["Da Nang", "TP.Đà Nẵng"],
-    "Hải Phòng": ["Hai Phong", "TP.Hải Phòng"],
-    "Cần Thơ": ["Can Tho", "TP.Cần Thơ"],
-    "Huế": ["Hue", "TP.Huế", "Thành phố Huế", "Thừa Thiên Huế"],
-    "Đắk Lắk": ["Dak Lak", "Đắk Lắc"],
+    "Hồ Chí Minh": ["HCM", "HCMC", "Ho Chi Minh", "Sài Gòn", "Saigon", "TP.HCM", "TP HCM", "Thành phố Hồ Chí Minh", "TPHCM", "SG"],
+    "Hà Nội": ["Ha Noi", "Hanoi", "TP.Hà Nội", "Thành phố Hà Nội", "HN"],
+    "Đà Nẵng": ["Da Nang", "TP.Đà Nẵng", "DN"],
+    "Hải Phòng": ["Hai Phong", "TP.Hải Phòng", "HP"],
+    "Cần Thơ": ["Can Tho", "TP.Cần Thơ", "CT"],
+    "Huế": ["Hue", "TP.Huế", "Thành phố Huế", "Thừa Thiên Huế", "TTH"],
+    "Đắk Lắk": ["Dak Lak", "Đắk Lắc", "Daklak", "Dac Lac"],
     "Khánh Hòa": ["Khánh Hoà", "Khanh Hoa"],
     "Thanh Hóa": ["Thanh Hoá", "Thanh Hoa"],
+    "Nghệ An": ["Nghe An"],
+    "Hà Tĩnh": ["Ha Tinh"],
+    "Quảng Ninh": ["Quang Ninh"],
+    "Lâm Đồng": ["Lam Dong", "Đà Lạt", "Da Lat", "Dalat"],
+    "Bắc Ninh": ["Bac Ninh"],
+    "Đồng Nai": ["Dong Nai", "Biên Hòa", "Bien Hoa"],
+    "An Giang": ["An Giang"],
+    "Cà Mau": ["Ca Mau"],
 }
+
+
+def remove_diacritics(text: str) -> str:
+    """
+    Remove Vietnamese diacritics from text.
+    E.g., "Hồ Chí Minh" -> "Ho Chi Minh"
+    """
+    # Normalize to NFD (decomposed form)
+    text = unicodedata.normalize('NFD', text)
+    # Remove combining diacritical marks
+    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+    # Handle special Vietnamese characters (đ/Đ)
+    replacements = {'đ': 'd', 'Đ': 'D'}
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def normalize_text_for_comparison(text: str) -> str:
+    """
+    Normalize text for fuzzy comparison.
+    Removes diacritics, converts to lowercase, removes extra spaces and punctuation.
+    """
+    text = remove_diacritics(text.lower().strip())
+    # Remove common prefixes
+    prefixes = ['tp.', 'tp ', 'thanh pho ', 'tinh ', 't. ', 't.']
+    for prefix in prefixes:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    # Remove punctuation and extra spaces
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
 def normalize_province_name(name: str) -> str | None:
@@ -138,13 +182,29 @@ def normalize_province_name(name: str) -> str | None:
     Handles:
     - Direct matches with current 34 provinces
     - Legacy province names (automatically mapped to new merged provinces)
-    - Common aliases and variations
+    - Common aliases and variations (HCM, Saigon, etc.)
+    - Fuzzy matching: removes diacritics for comparison
+    - Partial matching for longer strings
     
     Args:
         name: Province name to validate (can be alias or variation)
     
     Returns:
         Canonical province name or None if invalid
+    
+    Examples:
+        >>> normalize_province_name("Hồ Chí Minh")
+        "Hồ Chí Minh"
+        >>> normalize_province_name("ho chi minh")
+        "Hồ Chí Minh"
+        >>> normalize_province_name("HCM")
+        "Hồ Chí Minh"
+        >>> normalize_province_name("Saigon")
+        "Hồ Chí Minh"
+        >>> normalize_province_name("Bình Dương")  # Legacy province
+        "Hồ Chí Minh"
+        >>> normalize_province_name("TP.Đà Nẵng")
+        "Đà Nẵng"
     """
     if not name:
         return None
@@ -166,10 +226,37 @@ def normalize_province_name(name: str) -> str | None:
         if legacy.lower() == name_lower:
             return new_province
     
-    # Check aliases
+    # Check aliases (exact match, case-insensitive)
     for canonical, aliases in PROVINCE_ALIASES.items():
         if name_lower in [a.lower() for a in aliases]:
             return canonical
+    
+    # Fuzzy match: remove diacritics and compare
+    name_normalized = normalize_text_for_comparison(name)
+    
+    # Check against current provinces (without diacritics)
+    for province in VIETNAM_PROVINCES:
+        if normalize_text_for_comparison(province) == name_normalized:
+            return province
+    
+    # Check against legacy provinces (without diacritics)
+    for old_province, new_province in LEGACY_PROVINCE_MAPPING.items():
+        if normalize_text_for_comparison(old_province) == name_normalized:
+            return new_province
+    
+    # Check against aliases with normalization
+    for canonical, aliases in PROVINCE_ALIASES.items():
+        for alias in aliases:
+            if normalize_text_for_comparison(alias) == name_normalized:
+                return canonical
+    
+    # Partial match (contains) - more lenient for edge cases
+    # Only for strings with at least 4 characters to avoid false positives
+    if len(name_normalized) >= 4:
+        for province in VIETNAM_PROVINCES:
+            province_normalized = normalize_text_for_comparison(province)
+            if name_normalized in province_normalized or province_normalized in name_normalized:
+                return province
     
     return None
 
