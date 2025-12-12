@@ -30,11 +30,11 @@ class OrderAdmin(admin.ModelAdmin):
         ('Pricing', {'fields': ('subtotal', 'shipping_cost', 'discount_amount', 'tax_amount', 'total')}),
         ('Shipping Address', {'fields': (
             'shipping_name', 'shipping_phone', 'shipping_address',
-            'shipping_city', 'shipping_state', 'shipping_country', 'shipping_postal_code'
+            'shipping_province', 'shipping_ward', 'shipping_country', 'shipping_postal_code'
         )}),
         ('Billing Address', {'fields': (
             'billing_name', 'billing_phone', 'billing_address',
-            'billing_city', 'billing_state', 'billing_country', 'billing_postal_code'
+            'billing_province', 'billing_ward', 'billing_country', 'billing_postal_code'
         ), 'classes': ('collapse',)}),
         ('Additional Info', {'fields': ('coupon', 'customer_note', 'admin_note')}),
         ('Timestamps', {'fields': (

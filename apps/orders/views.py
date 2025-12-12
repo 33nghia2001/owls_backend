@@ -186,10 +186,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             shipping_name=data['shipping_name'],
             shipping_phone=data['shipping_phone'],
             shipping_address=data['shipping_address'],
-            shipping_city=data['shipping_city'],
-            shipping_state=data['shipping_state'],
+            shipping_province=data['shipping_province'],
+            shipping_ward=data['shipping_ward'],
             shipping_country=data.get('shipping_country', 'Vietnam'),
-            shipping_postal_code=data['shipping_postal_code'],
+            shipping_postal_code=data.get('shipping_postal_code', ''),
             coupon=coupon,
             customer_note=data.get('customer_note', '')
         )
@@ -199,8 +199,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.billing_name = data.get('billing_name', '')
             order.billing_phone = data.get('billing_phone', '')
             order.billing_address = data.get('billing_address', '')
-            order.billing_city = data.get('billing_city', '')
-            order.billing_state = data.get('billing_state', '')
+            order.billing_province = data.get('billing_province', '')
+            order.billing_ward = data.get('billing_ward', '')
             order.billing_country = data.get('billing_country', '')
             order.billing_postal_code = data.get('billing_postal_code', '')
             order.save()

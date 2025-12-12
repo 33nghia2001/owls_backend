@@ -76,21 +76,21 @@ class Order(models.Model):
     tax_amount = MoneyField(max_digits=10, decimal_places=2, default_currency='VND', default=0)
     total = MoneyField(max_digits=12, decimal_places=2, default_currency='VND')
     
-    # Shipping Address
+    # Shipping Address (Updated: Removed District, added Ward & Province)
     shipping_name = models.CharField(max_length=100)
     shipping_phone = PhoneNumberField()
-    shipping_address = models.CharField(max_length=255)
-    shipping_city = models.CharField(max_length=100)
-    shipping_state = models.CharField(max_length=100)
+    shipping_address = models.CharField(max_length=255) # Số nhà, tên đường
+    shipping_province = models.CharField(max_length=100) # Tỉnh / Thành phố
+    shipping_ward = models.CharField(max_length=100) # Phường / Xã
     shipping_country = models.CharField(max_length=100, default='Vietnam')
-    shipping_postal_code = models.CharField(max_length=20)
+    shipping_postal_code = models.CharField(max_length=20, blank=True)
     
-    # Billing Address (optional, same as shipping if null)
+    # Billing Address (Updated structure)
     billing_name = models.CharField(max_length=100, blank=True)
     billing_phone = PhoneNumberField(blank=True, null=True)
     billing_address = models.CharField(max_length=255, blank=True)
-    billing_city = models.CharField(max_length=100, blank=True)
-    billing_state = models.CharField(max_length=100, blank=True)
+    billing_province = models.CharField(max_length=100, blank=True)
+    billing_ward = models.CharField(max_length=100, blank=True)
     billing_country = models.CharField(max_length=100, blank=True)
     billing_postal_code = models.CharField(max_length=20, blank=True)
     

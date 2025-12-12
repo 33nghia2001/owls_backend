@@ -48,10 +48,12 @@ class OrderDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'order_number', 'status', 'payment_status',
             'subtotal', 'shipping_cost', 'discount_amount', 'tax_amount', 'total',
+            # Shipping Address Fields
             'shipping_name', 'shipping_phone', 'shipping_address',
-            'shipping_city', 'shipping_state', 'shipping_country', 'shipping_postal_code',
+            'shipping_province', 'shipping_ward', 'shipping_country', 'shipping_postal_code',
+            # Billing Address Fields
             'billing_name', 'billing_phone', 'billing_address',
-            'billing_city', 'billing_state', 'billing_country', 'billing_postal_code',
+            'billing_province', 'billing_ward', 'billing_country', 'billing_postal_code',
             'coupon', 'customer_note',
             'items', 'status_history',
             'created_at', 'confirmed_at', 'shipped_at', 'delivered_at'
@@ -65,20 +67,23 @@ class CreateOrderSerializer(serializers.Serializer):
     shipping_name = serializers.CharField(max_length=100)
     shipping_phone = serializers.CharField(max_length=20)
     shipping_address = serializers.CharField(max_length=255)
-    shipping_city = serializers.CharField(max_length=100)
-    shipping_state = serializers.CharField(max_length=100)
+    
+    # Cấu trúc địa chỉ mới: Tỉnh/TP và Phường/Xã
+    shipping_province = serializers.CharField(max_length=100)
+    shipping_ward = serializers.CharField(max_length=100)
+    
     shipping_country = serializers.CharField(max_length=100, default='Vietnam')
-    shipping_postal_code = serializers.CharField(max_length=20)
+    shipping_postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
     
     # Optional billing address
     same_as_shipping = serializers.BooleanField(default=True)
     billing_name = serializers.CharField(max_length=100, required=False)
     billing_phone = serializers.CharField(max_length=20, required=False)
     billing_address = serializers.CharField(max_length=255, required=False)
-    billing_city = serializers.CharField(max_length=100, required=False)
-    billing_state = serializers.CharField(max_length=100, required=False)
+    billing_province = serializers.CharField(max_length=100, required=False)
+    billing_ward = serializers.CharField(max_length=100, required=False)
     billing_country = serializers.CharField(max_length=100, required=False)
-    billing_postal_code = serializers.CharField(max_length=20, required=False)
+    billing_postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
     
     # Optional
     coupon_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
@@ -109,5 +114,7 @@ class VendorOrderItemSerializer(serializers.ModelSerializer):
         ]
     
     def get_shipping_address(self, obj):
+        """Format full shipping address from new fields."""
         order = obj.order
-        return f"{order.shipping_address}, {order.shipping_city}, {order.shipping_state}"
+        # Format: Số nhà/Đường, Phường/Xã, Tỉnh/TP
+        return f"{order.shipping_address}, {order.shipping_ward}, {order.shipping_province}"
